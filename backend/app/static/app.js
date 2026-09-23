@@ -85,6 +85,7 @@ function renderDashboard(data) {
 
   const recommendationsCard = element("section", "card");
   recommendationsCard.append(element("h2", "", "Следующие шаги"));
+  if (mode === "llm") recommendationsCard.append(element("p", "mode-note", "AI-режим включён: модель выбрала шаги из проверенного сервером списка."));
   if (mode === "rules_fallback") recommendationsCard.append(element("p", "mode-note", "Рекомендации построены проверяемыми правилами. Полный AI-режим подключается через конфигурацию модели."));
   if (notice && mode !== "rules_fallback") recommendationsCard.append(element("p", "mode-note", notice));
   const recommendationList = element("div", "recommendation-list");
