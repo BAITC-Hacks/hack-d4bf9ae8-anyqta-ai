@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -73,6 +74,27 @@ def load_profile_package(employees: str | Path, history: str | Path) -> Package:
         employees=_read_json_list(Path(employees), "employees"),
         history=_read_history(Path(history)),
     )
+
+
+def load_profile_package_from_text(employees_json: str, history_csv: str,
+                                   source_name: str = "uploaded package") -> Package:
+    """Parse a jury upload without writing its JSON/CSV files to disk."""
+    try:
+        payload = json.loads(employees_json)
+    except json.JSONDecodeError as error:
+        raise ImportValidationError(f"{source_name}: employees JSON is invalid: {error}") from error
+    if not isinstance(payload, dict) or not isinstance(payload.get("employees"), list):
+        raise ImportValidationError(f"{source_name}: employees JSON must contain an 'employees' array")
+    if not all(isinstance(item, dict) for item in payload["employees"]):
+        raise ImportValidationError(f"{source_name}: employees array must contain objects")
+    required = {
+        "record_id", "employee_id", "event_id", "date", "due_date", "status",
+        "completion_pct", "score", "feedback_rating", "assigned_by",
+    }
+    reader = csv.DictReader(io.StringIO(history_csv))
+    if reader.fieldnames is None or set(reader.fieldnames) != required:
+        raise ImportValidationError(f"{source_name}: history CSV has an invalid header")
+    return Package(employees=payload["employees"], history=list(reader))
 
 
 def _require(item: dict[str, Any], field: str, context: str) -> Any:

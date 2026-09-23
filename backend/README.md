@@ -140,3 +140,20 @@ recommendations. A repeated completion request cannot add a second skill gain.
 
 Set `DEMO_MODE=false` to hide the completion simulation. A real LMS integration
 is intentionally outside the MVP.
+
+## HR overview and jury-data upload
+
+Sign in as `hr@careerquest.demo` after starting the web server. The HR screen
+contains:
+
+- a private aggregate of skill gaps, filterable by department, role and grade;
+- explainable support signals based on voluntary activity participation during
+  the displayed six-month period;
+- an employee detail view with trajectory and currently available steps;
+- an upload form for `employees.json` and `activity_history.csv` in the
+  starter-kit schema.
+
+The upload is validated as one atomic package. If it contains unknown IDs,
+invalid dates, duplicate records or another schema error, nothing is written to
+the database. A successful upload immediately appears in the HR filters and
+can be opened in the detail view without creating an employee login.

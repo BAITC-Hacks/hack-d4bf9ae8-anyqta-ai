@@ -31,11 +31,13 @@
         <div id="employee-content" aria-live="polite"></div>
       </section>
 
-      <section id="hr-view" class="auth-card" hidden>
-        <p class="eyebrow">CAREER QUEST · HR</p>
-        <h1>Доступ HR подтверждён</h1>
-        <p class="intro">HR-обзор и импорт проверочных профилей будут добавлены на этапе 7. Сейчас можно выйти и войти как сотрудник для проверки личного кабинета.</p>
-        <button id="hr-logout-button" class="secondary">Выйти</button>
+      <section id="hr-view" hidden>
+        <header class="topbar">
+          <div><p class="eyebrow">CAREER QUEST · HR</p><h1>Обзор развития</h1></div>
+          <div class="user-actions"><span class="pill">HR</span><button id="hr-logout-button" class="secondary">Выйти</button></div>
+        </header>
+        <p id="hr-error" class="error" role="alert" hidden></p>
+        <div id="hr-content" aria-live="polite"></div>
       </section>
     </main>
     <script src="/app.js" defer></script>

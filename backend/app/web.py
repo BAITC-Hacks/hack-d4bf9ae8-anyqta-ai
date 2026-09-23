@@ -13,12 +13,13 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .activities import ActivityError, active_enrollments, complete_activity, enroll_activity
 from .auth import AuthenticationError, User, authenticate, issue_session, read_session
 from .career import CareerCalculationError, calculate_trajectory
 from .db import connect, migrate
+from .hr import HrError, hr_dashboard, hr_employee_detail, import_hr_profile_package
 from .recommendations import RecommendationError, recommend_employee
 
 
@@ -109,6 +110,33 @@ class WebApplication:
         finally:
             connection.close()
 
+    def hr_overview(self, user: User, filters: dict[str, str]) -> dict[str, Any]:
+        if user.access_role != "hr":
+            raise PermissionError("HR access required")
+        connection = self._connection()
+        try:
+            return hr_dashboard(connection, filters)
+        finally:
+            connection.close()
+
+    def hr_employee(self, user: User, employee_id: str) -> dict[str, Any]:
+        if user.access_role != "hr":
+            raise PermissionError("HR access required")
+        connection = self._connection()
+        try:
+            return hr_employee_detail(connection, employee_id)
+        finally:
+            connection.close()
+
+    def import_hr_profiles(self, user: User, employees_json: str, history_csv: str) -> dict[str, int]:
+        if user.access_role != "hr":
+            raise PermissionError("HR access required")
+        connection = self._connection()
+        try:
+            return import_hr_profile_package(connection, employees_json, history_csv)
+        finally:
+            connection.close()
+
 
 class CareerQuestHandler(BaseHTTPRequestHandler):
     """Minimal same-origin JSON API and static file handler."""
@@ -134,11 +162,14 @@ class CareerQuestHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def _read_json(self) -> dict[str, Any]:
+        return self._read_json_with_limit(MAX_BODY_BYTES)
+
+    def _read_json_with_limit(self, max_body_bytes: int) -> dict[str, Any]:
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError as error:
             raise ValueError("Invalid request body") from error
-        if length <= 0 or length > MAX_BODY_BYTES:
+        if length <= 0 or length > max_body_bytes:
             raise ValueError("Invalid request body")
         try:
             payload = json.loads(self.rfile.read(length))
@@ -191,6 +222,29 @@ class CareerQuestHandler(BaseHTTPRequestHandler):
             except PermissionError:
                 self._json(HTTPStatus.FORBIDDEN, {"error": "Employee access required"})
             except (CareerCalculationError, RecommendationError, ActivityError) as error:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+        elif path == "/api/hr/dashboard":
+            try:
+                query = urlparse(self.path).query
+                filters = {key: values[-1] for key, values in parse_qs(query).items() if values}
+                self._json(HTTPStatus.OK, self.application.hr_overview(self._session_user(), filters))
+            except AuthenticationError:
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
+            except PermissionError:
+                self._json(HTTPStatus.FORBIDDEN, {"error": "HR access required"})
+            except HrError as error:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+        elif path.startswith("/api/hr/employees/"):
+            try:
+                employee_id = path.rsplit("/", 1)[-1]
+                if not employee_id:
+                    raise HrError("Employee not found")
+                self._json(HTTPStatus.OK, self.application.hr_employee(self._session_user(), employee_id))
+            except AuthenticationError:
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
+            except PermissionError:
+                self._json(HTTPStatus.FORBIDDEN, {"error": "HR access required"})
+            except (HrError, CareerCalculationError, RecommendationError) as error:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
         else:
             self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
@@ -245,6 +299,20 @@ class CareerQuestHandler(BaseHTTPRequestHandler):
             except PermissionError as error:
                 self._json(HTTPStatus.FORBIDDEN, {"error": str(error)})
             except (ValueError, ActivityError) as error:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+        elif path == "/api/hr/import":
+            try:
+                payload = self._read_json_with_limit(2_000_000)
+                employees_json = payload.get("employees_json")
+                history_csv = payload.get("history_csv")
+                if not isinstance(employees_json, str) or not isinstance(history_csv, str):
+                    raise ValueError("employees_json and history_csv are required")
+                self._json(HTTPStatus.CREATED, self.application.import_hr_profiles(self._session_user(), employees_json, history_csv))
+            except AuthenticationError:
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
+            except PermissionError:
+                self._json(HTTPStatus.FORBIDDEN, {"error": "HR access required"})
+            except (ValueError, HrError) as error:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
         else:
             self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
