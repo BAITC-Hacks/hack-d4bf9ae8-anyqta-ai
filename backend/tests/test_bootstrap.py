@@ -6,10 +6,9 @@ from backend.app.bootstrap import bootstrap
 from backend.app.db import connect
 
 
-DATASET = Path("data/career_quest_dataset")
+DATASET = Path(__file__).resolve().parents[2] / "data" / "career_quest_dataset"
 
 
-@unittest.skipUnless(DATASET.exists(), "bundled starter dataset is not available")
 class BootstrapTests(unittest.TestCase):
     def test_bootstrap_imports_once_and_preserves_existing_data(self):
         with tempfile.TemporaryDirectory() as directory:

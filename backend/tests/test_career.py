@@ -7,10 +7,9 @@ from backend.app.db import connect
 from backend.app.importer import import_package, load_full_package
 
 
-DATASET = Path("/Users/IZinekenov/Downloads/case_1/career_quest_dataset")
+DATASET = Path(__file__).resolve().parents[2] / "data" / "career_quest_dataset"
 
 
-@unittest.skipUnless(DATASET.exists(), "starter dataset is not available")
 class CareerCalculationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

@@ -13,14 +13,15 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .activities import ActivityError, active_enrollments, complete_activity, enroll_activity, reset_demo_employee
 from .auth import AuthenticationError, User, authenticate, issue_session, read_session
-from .career import CareerCalculationError, calculate_trajectory
+from .career import CareerCalculationError, calculate_trajectory, goal_options, set_goal
 from .db import connect, migrate
 from .hr import HrError, hr_dashboard, hr_employee_detail, import_hr_profile_package
-from .recommendations import RecommendationError, recommend_employee, selector_from_environment
+from .recommendations import RecommendationError
+from .recommendation_service import RecommendationService
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -30,12 +31,14 @@ MAX_BODY_BYTES = 10_000
 class WebApplication:
     """Request-independent operations used by HTTP handlers and tests."""
 
-    def __init__(self, database_path: str | Path, session_secret: str, demo_mode: bool = True):
+    def __init__(self, database_path: str | Path, session_secret: str, demo_mode: bool = True,
+                 recommendation_service: RecommendationService | None = None):
         if len(session_secret) < 32:
             raise ValueError("SESSION_SECRET must contain at least 32 characters")
         self.database_path = str(database_path)
         self.session_secret = session_secret
         self.demo_mode = demo_mode
+        self.recommendation_service = recommendation_service or RecommendationService()
         connection = connect(self.database_path)
         try:
             migrate(connection)
@@ -76,19 +79,50 @@ class WebApplication:
         connection = self._connection()
         try:
             trajectory = calculate_trajectory(connection, user.employee_id)
-            recommendation_result = recommend_employee(
-                connection, user.employee_id, selector=selector_from_environment()
-            )
             return {
                 "user": {"username": user.username, "access_role": user.access_role},
                 "is_demo_user": user.is_demo,
                 "trajectory": trajectory,
-                "recommendations": recommendation_result["recommendations"],
-                "recommendation_mode": recommendation_result["mode"],
-                "recommendation_notice": recommendation_result["fallback_reason"],
+                "goal_options": goal_options(connection),
                 "active_enrollments": active_enrollments(connection, user.employee_id),
                 "demo_mode": self.demo_mode,
             }
+        finally:
+            connection.close()
+
+    def employee_recommendations(self, user: User) -> dict[str, Any]:
+        if user.access_role != "employee" or user.employee_id is None:
+            raise PermissionError("Employee access required")
+        return self._recommendations(user.employee_id)
+
+    def hr_recommendations(self, user: User, employee_id: str) -> dict[str, Any]:
+        if user.access_role != "hr":
+            raise PermissionError("HR access required")
+        return self._recommendations(employee_id)
+
+    def _recommendations(self, employee_id: str) -> dict[str, Any]:
+        connection = self._connection()
+        try:
+            return self.recommendation_service.get(connection, employee_id)
+        finally:
+            connection.close()
+
+    def change_goal(self, user: User, role: str, grade: str) -> dict[str, Any]:
+        if user.access_role != "employee" or user.employee_id is None:
+            raise PermissionError("Employee access required")
+        connection = self._connection()
+        try:
+            set_goal(connection, user.employee_id, role, grade)
+            return {"target": {"role": role, "grade": grade}}
+        finally:
+            connection.close()
+
+    def health(self) -> dict[str, Any]:
+        connection = self._connection()
+        try:
+            ready = all(connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+                        for table in ("skills", "events", "employees", "users", "recommendation_revision"))
+            return {"ready": ready}
         finally:
             connection.close()
 
@@ -105,7 +139,7 @@ class WebApplication:
                                  completion_date: str = "2026-10-01") -> dict[str, Any]:
         if not self.demo_mode:
             raise PermissionError("Demo completion is disabled")
-        if user.access_role != "employee" or user.employee_id is None:
+        if user.access_role != "employee" or user.employee_id is None or not user.is_demo:
             raise PermissionError("Employee access required")
         connection = self._connection()
         try:
@@ -142,12 +176,13 @@ class WebApplication:
         finally:
             connection.close()
 
-    def import_hr_profiles(self, user: User, employees_json: str, history_csv: str) -> dict[str, int]:
+    def import_hr_profiles(self, user: User, employees_json: str, history_csv: str,
+                           preview: bool = False) -> dict[str, Any]:
         if user.access_role != "hr":
             raise PermissionError("HR access required")
         connection = self._connection()
         try:
-            return import_hr_profile_package(connection, employees_json, history_csv)
+            return import_hr_profile_package(connection, employees_json, history_csv, preview=preview)
         finally:
             connection.close()
 
@@ -222,15 +257,22 @@ class CareerQuestHandler(BaseHTTPRequestHandler):
             self._serve_static("app.js")
         elif path == "/styles.css":
             self._serve_static("styles.css")
+        elif path == "/api/health":
+            try:
+                result = self.application.health()
+                self._json(HTTPStatus.OK if result["ready"] else HTTPStatus.SERVICE_UNAVAILABLE, result)
+            except sqlite3.Error:
+                self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"ready": False})
         elif path == "/api/me":
             try:
                 user = self._session_user()
                 self._json(HTTPStatus.OK, {"username": user.username, "access_role": user.access_role})
             except AuthenticationError:
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
-        elif path == "/api/employee/dashboard":
+        elif path in {"/api/employee/dashboard", "/api/employee/recommendations"}:
             try:
-                self._json(HTTPStatus.OK, self.application.employee_dashboard(self._session_user()))
+                operation = self.application.employee_recommendations if path.endswith("/recommendations") else self.application.employee_dashboard
+                self._json(HTTPStatus.OK, operation(self._session_user()))
             except AuthenticationError:
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
             except PermissionError:
@@ -250,10 +292,12 @@ class CareerQuestHandler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
         elif path.startswith("/api/hr/employees/"):
             try:
-                employee_id = path.rsplit("/", 1)[-1]
-                if not employee_id:
+                parts = path.split("/")
+                if len(parts) not in (5, 6) or not parts[4] or (len(parts) == 6 and parts[5] != "recommendations"):
                     raise HrError("Employee not found")
-                self._json(HTTPStatus.OK, self.application.hr_employee(self._session_user(), employee_id))
+                employee_id = unquote(parts[4])
+                operation = self.application.hr_recommendations if len(parts) == 6 else self.application.hr_employee
+                self._json(HTTPStatus.OK, operation(self._session_user(), employee_id))
             except AuthenticationError:
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
             except PermissionError:
@@ -281,6 +325,16 @@ class CareerQuestHandler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
         elif path == "/api/logout":
             self._json(HTTPStatus.NO_CONTENT, {}, "cq_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
+        elif path == "/api/employee/goal":
+            try:
+                payload = self._read_json()
+                self._json(HTTPStatus.OK, self.application.change_goal(self._session_user(), payload.get("role"), payload.get("grade")))
+            except AuthenticationError:
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
+            except PermissionError:
+                self._json(HTTPStatus.FORBIDDEN, {"error": "Employee access required"})
+            except ValueError as error:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
         elif path.startswith("/api/employee/activities/") and path.endswith("/enroll"):
             try:
                 self._read_json()
@@ -314,14 +368,16 @@ class CareerQuestHandler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.FORBIDDEN, {"error": str(error)})
             except (ValueError, ActivityError) as error:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
-        elif path == "/api/hr/import":
+        elif path in {"/api/hr/import", "/api/hr/import/preview"}:
             try:
                 payload = self._read_json_with_limit(2_000_000)
                 employees_json = payload.get("employees_json")
                 history_csv = payload.get("history_csv")
                 if not isinstance(employees_json, str) or not isinstance(history_csv, str):
                     raise ValueError("employees_json and history_csv are required")
-                self._json(HTTPStatus.CREATED, self.application.import_hr_profiles(self._session_user(), employees_json, history_csv))
+                preview = path.endswith("/preview")
+                self._json(HTTPStatus.OK if preview else HTTPStatus.CREATED,
+                           self.application.import_hr_profiles(self._session_user(), employees_json, history_csv, preview=preview))
             except AuthenticationError:
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
             except PermissionError:
@@ -347,8 +403,9 @@ def serve(database_path: str | Path, host: str = "127.0.0.1", port: int = 8000,
     """Build a local server. `serve_forever` is intentionally called by `main`."""
     secret = session_secret or os.getenv("SESSION_SECRET") or secrets.token_urlsafe(48)
     is_demo = demo_mode if demo_mode is not None else os.getenv("DEMO_MODE", "true").lower() == "true"
-    CareerQuestHandler.application = WebApplication(database_path, secret, is_demo)
-    return ThreadingHTTPServer((host, port), CareerQuestHandler)
+    handler = type("BoundCareerQuestHandler", (CareerQuestHandler,),
+                   {"application": WebApplication(database_path, secret, is_demo)})
+    return ThreadingHTTPServer((host, port), handler)
 
 
 def main() -> None:

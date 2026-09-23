@@ -1,0 +1,10 @@
+record_id,employee_id,event_id,date,due_date,status,completion_pct,score,feedback_rating,assigned_by
+JURY_R_1,JURY_CONTEXT_1,EV_036,2026-07-15,,no_show,0,,,self
+JURY_R_2,JURY_CONTEXT_1,EV_036,2026-08-15,,no_show,0,,,self
+JURY_R_3,JURY_CONTEXT_1,EV_036,2026-09-15,,no_show,0,,,self
+JURY_R_4,JURY_CONTEXT_2,EV_006,2026-07-15,,no_show,0,,,self
+JURY_R_5,JURY_CONTEXT_2,EV_006,2026-08-15,,no_show,0,,,self
+JURY_R_6,JURY_CONTEXT_2,EV_006,2026-09-15,,no_show,0,,,self
+JURY_R_7,JURY_CONTEXT_2,EV_005,2026-06-10,,completed,100,,,self
+JURY_R_8,JURY_CONTEXT_2,EV_008,2026-06-20,,completed,100,,,self
+JURY_R_9,JURY_CONTEXT_3,EV_037,2026-06-15,,completed,100,,,self
