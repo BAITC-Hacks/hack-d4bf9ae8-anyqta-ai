@@ -44,18 +44,29 @@ def _read_json_list(path: Path, key: str) -> list[dict[str, Any]]:
 
 
 def _read_history(path: Path) -> list[dict[str, str]]:
+    try:
+        return _parse_history(path.read_text(encoding="utf-8-sig"), str(path))
+    except OSError as error:
+        raise ImportValidationError(f"Cannot read {path}: {error}") from error
+
+
+def _parse_history(text: str, source: str) -> list[dict[str, str]]:
     required = {
         "record_id", "employee_id", "event_id", "date", "due_date", "status",
         "completion_pct", "score", "feedback_rating", "assigned_by",
     }
+    reader = csv.DictReader(io.StringIO(text.lstrip("\ufeff")), strict=True)
     try:
-        with path.open(encoding="utf-8", newline="") as stream:
-            reader = csv.DictReader(stream)
-            if reader.fieldnames is None or set(reader.fieldnames) != required:
-                raise ImportValidationError(f"{path} has an invalid CSV header")
-            return list(reader)
-    except OSError as error:
-        raise ImportValidationError(f"Cannot read {path}: {error}") from error
+        if reader.fieldnames is None or set(reader.fieldnames) != required or len(reader.fieldnames) != len(required):
+            raise ImportValidationError(f"{source}: invalid CSV header; expected {', '.join(sorted(required))}")
+        rows = []
+        for row in reader:
+            if None in row or any(value is None for value in row.values()):
+                raise ImportValidationError(f"{source}: CSV line {reader.line_num}: incorrect number of columns")
+            rows.append(row)
+        return rows
+    except csv.Error as error:
+        raise ImportValidationError(f"{source}: CSV line {reader.line_num}: {error}") from error
 
 
 def load_full_package(dataset_dir: str | Path) -> Package:
@@ -80,21 +91,14 @@ def load_profile_package_from_text(employees_json: str, history_csv: str,
                                    source_name: str = "uploaded package") -> Package:
     """Parse a jury upload without writing its JSON/CSV files to disk."""
     try:
-        payload = json.loads(employees_json)
+        payload = json.loads(employees_json.lstrip("\ufeff"))
     except json.JSONDecodeError as error:
         raise ImportValidationError(f"{source_name}: employees JSON is invalid: {error}") from error
     if not isinstance(payload, dict) or not isinstance(payload.get("employees"), list):
         raise ImportValidationError(f"{source_name}: employees JSON must contain an 'employees' array")
     if not all(isinstance(item, dict) for item in payload["employees"]):
         raise ImportValidationError(f"{source_name}: employees array must contain objects")
-    required = {
-        "record_id", "employee_id", "event_id", "date", "due_date", "status",
-        "completion_pct", "score", "feedback_rating", "assigned_by",
-    }
-    reader = csv.DictReader(io.StringIO(history_csv))
-    if reader.fieldnames is None or set(reader.fieldnames) != required:
-        raise ImportValidationError(f"{source_name}: history CSV has an invalid header")
-    return Package(employees=payload["employees"], history=list(reader))
+    return Package(employees=payload["employees"], history=_parse_history(history_csv, source_name))
 
 
 def _require(item: dict[str, Any], field: str, context: str) -> Any:
@@ -114,7 +118,7 @@ def _date(value: str, context: str, optional: bool = False) -> None:
 
 
 def _integer(value: Any, context: str, minimum: int, maximum: int) -> int:
-    if isinstance(value, bool):
+    if isinstance(value, bool) or isinstance(value, float):
         raise ImportValidationError(f"{context}: must be an integer")
     try:
         parsed = int(value)
@@ -137,13 +141,15 @@ def _ids(items: Iterable[dict[str, Any]], field: str, label: str) -> set[str]:
 
 def validate(package: Package, known_skill_ids: set[str] | None = None,
              known_event_ids: set[str] | None = None,
-             known_employee_ids: set[str] | None = None) -> None:
+             known_employee_ids: set[str] | None = None,
+             known_role_profiles: set[tuple[str, str]] | None = None) -> None:
     """Validate all cross references before a transaction changes the database."""
     employee_ids = _ids(package.employees, "employee_id", "employees")
     history_ids = _ids(package.history, "record_id", "activity_history")
     del history_ids
     skill_ids = known_skill_ids or set()
     event_ids = known_event_ids or set()
+    combinations = known_role_profiles or set()
 
     if package.skills is not None:
         skill_ids = _ids(package.skills, "skill_id", "skills")
@@ -178,7 +184,7 @@ def validate(package: Package, known_skill_ids: set[str] | None = None,
             for session in event.get("upcoming_sessions", []):
                 _date(session, context)
     if package.role_profiles is not None:
-        combinations: set[tuple[str, str]] = set()
+        combinations = set()
         for profile in package.role_profiles:
             role = _require(profile, "role", "role profile")
             grade = _require(profile, "grade", f"role profile {role}")
@@ -186,7 +192,7 @@ def validate(package: Package, known_skill_ids: set[str] | None = None,
                 raise ImportValidationError(f"role profile {role}: duplicate or invalid grade")
             combinations.add((role, grade))
             required = profile.get("required_skills")
-            if not isinstance(required, dict):
+            if not isinstance(required, dict) or not required:
                 raise ImportValidationError(f"role profile {role}/{grade}: required_skills must be an object")
             for identifier, level in required.items():
                 if identifier not in skill_ids:
@@ -196,11 +202,12 @@ def validate(package: Package, known_skill_ids: set[str] | None = None,
                 if identifier not in required:
                     raise ImportValidationError(f"role profile {role}/{grade}: critical skill must be required")
 
-    for employee in package.employees:
-        context = f"employee {employee['employee_id']}"
+    for index, employee in enumerate(package.employees, start=1):
+        context = f"employees[{index}] ({employee['employee_id']})"
         for field in ("full_name", "department", "role", "hire_date", "work_format", "preferred_language", "last_review_date"):
-            _require(employee, field, context)
-        if employee.get("grade") not in GRADES:
+            if not isinstance(_require(employee, field, context), str):
+                raise ImportValidationError(f"{context}: {field} must be a string")
+        if not isinstance(employee.get("grade"), str) or employee["grade"] not in GRADES:
             raise ImportValidationError(f"{context}: invalid grade")
         if employee.get("work_format") not in {"office", "hybrid", "remote"}:
             raise ImportValidationError(f"{context}: invalid work_format")
@@ -210,21 +217,29 @@ def validate(package: Package, known_skill_ids: set[str] | None = None,
         _date(employee["last_review_date"], context)
         _integer(employee.get("tenure_months"), context, 0, 1000)
         manager_id = employee.get("manager_id")
-        if manager_id is not None and manager_id not in employee_ids | (known_employee_ids or set()):
+        if manager_id is not None and (not isinstance(manager_id, str) or manager_id not in employee_ids | (known_employee_ids or set())):
             raise ImportValidationError(f"{context}: unknown manager '{manager_id}'")
         goal = employee.get("career_goal")
-        if goal is not None and (not isinstance(goal, dict) or goal.get("target_grade") not in GRADES or not goal.get("target_role")):
+        if goal is not None and (not isinstance(goal, dict) or not isinstance(goal.get("target_grade"), str) or goal["target_grade"] not in GRADES or not isinstance(goal.get("target_role"), str) or not goal.get("target_role")):
             raise ImportValidationError(f"{context}: invalid career_goal")
+        if (employee["role"], employee["grade"]) not in combinations:
+            raise ImportValidationError(f"{context}: unknown role/grade '{employee['role']}/{employee['grade']}'")
+        grades = ("Junior", "Middle", "Senior", "Lead")
+        target = (goal["target_role"], goal["target_grade"]) if goal else (
+            (employee["role"], grades[grades.index(employee["grade"]) + 1]) if employee["grade"] != "Lead" else None
+        )
+        if target and target not in combinations:
+            raise ImportValidationError(f"{context}: career_goal has no requirements for '{target[0]}/{target[1]}'")
         if not isinstance(employee.get("skills"), dict):
             raise ImportValidationError(f"{context}: skills must be an object")
         for identifier, level in employee["skills"].items():
             if identifier not in skill_ids:
                 raise ImportValidationError(f"{context}: unknown skill '{identifier}'")
-            _integer(level, context, 0, 5)
+            _integer(level, f"{context}: skills.{identifier}", 0, 5)
 
     all_employees = employee_ids | (known_employee_ids or set())
-    for record in package.history:
-        context = f"history {record['record_id']}"
+    for index, record in enumerate(package.history, start=2):
+        context = f"history row {index} ({record['record_id']})"
         if record.get("employee_id") not in all_employees:
             raise ImportValidationError(f"{context}: unknown employee '{record.get('employee_id')}'")
         if record.get("event_id") not in event_ids:
@@ -233,7 +248,9 @@ def validate(package: Package, known_skill_ids: set[str] | None = None,
         _date(record.get("due_date", ""), context, optional=True)
         if record.get("status") not in STATUSES:
             raise ImportValidationError(f"{context}: invalid status")
-        _integer(record.get("completion_pct"), context, 0, 100)
+        completion = _integer(record.get("completion_pct"), f"{context}: completion_pct", 0, 100)
+        if record["status"] == "completed" and completion != 100:
+            raise ImportValidationError(f"{context}: completed requires completion_pct=100")
         if record.get("score"):
             _integer(record["score"], context, 0, 100)
         if record.get("feedback_rating"):
@@ -364,16 +381,38 @@ def _insert_history(connection: sqlite3.Connection, history: list[dict[str, str]
         )
 
 
-def import_package(connection: sqlite3.Connection, package: Package, kind: str, source_description: str) -> None:
-    """Validate then atomically add a full starter kit or a jury profile package."""
-    migrate(connection)
+def preview_package(connection: sqlite3.Connection, package: Package, kind: str = "profiles") -> dict[str, Any]:
+    """Validate conflicts and references without changing the database."""
     known_skills = _existing_ids(connection, "skills", "skill_id") or None
     known_events = _existing_ids(connection, "events", "event_id") or None
     known_employees = _existing_ids(connection, "employees", "employee_id") or None
     if kind == "profiles" and (not known_skills or not known_events):
         raise ImportValidationError("Import the starter-kit catalog before importing profiles")
-    validate(package, known_skills, known_events, known_employees)
+    known_roles = {tuple(row) for row in connection.execute("SELECT role, grade FROM role_profiles")}
+    validate(package, known_skills, known_events, known_employees, known_roles)
+    if kind == "full":
+        _assert_catalog_matches(connection, package)
+    new_employees = _new_records(connection, "employees", "employee_id", package.employees)
+    new_history = _new_records(connection, "activity_history", "record_id", package.history)
+    new_ids = {item["employee_id"] for item in new_employees}
+    return {
+        "employees_imported": len(new_employees),
+        "history_records_imported": len(new_history),
+        "employees_skipped": len(package.employees) - len(new_employees),
+        "history_records_skipped": len(package.history) - len(new_history),
+        "profiles": [{"employee_id": item["employee_id"], "full_name": item["full_name"],
+                      "role": item["role"], "grade": item["grade"], "is_new": item["employee_id"] in new_ids}
+                     for item in package.employees],
+    }
+
+
+def import_package(connection: sqlite3.Connection, package: Package, kind: str, source_description: str) -> dict[str, Any]:
+    """Validate and recheck conflicts inside the transaction used for the import."""
+    migrate(connection)
     with connection:
+        if not connection.in_transaction:
+            connection.execute("BEGIN IMMEDIATE")
+        summary = preview_package(connection, package, kind)
         if kind == "full":
             catalog_exists = _assert_catalog_matches(connection, package)
             if not catalog_exists:
@@ -383,6 +422,7 @@ def import_package(connection: sqlite3.Connection, package: Package, kind: str, 
         _insert_employees(connection, new_employees)
         _insert_history(connection, new_history)
         connection.execute("INSERT INTO import_batches(kind, source_description) VALUES (?, ?)", (kind, source_description))
+    return summary
 
 
 def main() -> None:

@@ -194,6 +194,7 @@ def complete_activity(connection: sqlite3.Connection, employee_id: str, enrollme
 def reset_demo_employee(connection: sqlite3.Connection, employee_id: str) -> dict[str, int]:
     """Remove only activity records created by this app for one demo employee."""
     with connection:
+        connection.execute("DELETE FROM employee_goals WHERE employee_id = ?", (employee_id,))
         active = connection.execute(
             "SELECT COUNT(*) FROM activity_enrollments WHERE employee_id = ?", (employee_id,)
         ).fetchone()[0]

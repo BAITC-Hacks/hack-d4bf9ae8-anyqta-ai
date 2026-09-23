@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-if [ "${DEMO_MODE:-true}" != "true" ]; then
-  echo "Refusing to reset because DEMO_MODE is not true."
+if ! docker compose exec -T career-quest python -c 'import os, sys; sys.exit(0 if os.getenv("DEMO_MODE", "false").lower() == "true" else 1)'; then
+  echo "Reset requires a running career-quest service with DEMO_MODE=true."
   exit 1
 fi
 

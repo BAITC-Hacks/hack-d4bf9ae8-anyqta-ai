@@ -125,7 +125,7 @@ export SESSION_SECRET="replace-with-a-long-random-secret"
 
 Without `SESSION_SECRET`, the server generates an in-memory secret for the
 current local run; active sessions expire when the server restarts. HR can sign
-in now; its analytics and import interface are added in stage 7.
+in to analytics, profile details and the jury import workflow.
 
 ## Activity lifecycle in the demo
 
@@ -160,3 +160,29 @@ The upload is validated as one atomic package. If it contains unknown IDs,
 invalid dates, duplicate records or another schema error, nothing is written to
 the database. A successful upload immediately appears in the HR filters and
 can be opened in the detail view without creating an employee login.
+
+## Separate profile and recommendation requests
+
+- `GET /api/employee/dashboard`: owned profile, trajectory, goal options and active enrollments; no model call.
+- `GET /api/employee/recommendations`: model selection or labelled fallback.
+- `POST /api/employee/goal`: `{ "role": "Backend Engineer", "grade": "Senior" }`; changes only the signed-in employee's goal.
+- `GET /api/hr/employees/:id`: fast profile and source history.
+- `GET /api/hr/employees/:id/recommendations`: the same recommendation service/cache as the employee endpoint.
+- `POST /api/hr/import/preview`: `{ "employees_json": "…", "history_csv": "…" }`; validation and counts without writes.
+- `POST /api/hr/import`: the same body; revalidation and atomic insert with added/skipped counts and profile IDs.
+- `GET /api/health`: database readiness; HTTP 503 until seeded data is present.
+
+The goal override is separate from immutable import source JSON. Personal demo
+reset also removes this override. Revision triggers invalidate the bounded cache
+for profile, history, goal and catalog changes, including CLI imports. Partial
+model configuration returns a labelled fallback. Provider error bodies and
+credentials are never returned.
+
+```bash
+python3 scripts/acceptance.py
+python3 scripts/evaluate_recommendations.py
+```
+
+Both commands use temporary databases and avoid external model calls. The
+acceptance script needs permission to bind a loopback port. `--with-ai` on the
+evaluation script opts into three calls using the configured environment.

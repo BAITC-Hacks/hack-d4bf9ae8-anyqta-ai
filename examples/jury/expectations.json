@@ -1,0 +1,34 @@
+[
+  {
+    "employee_id": "JURY_CONTEXT_1",
+    "scenario": "Critical System Design vs lowest Public Speaking with repeated no-shows",
+    "acceptable_first": [
+      "EV_005",
+      "EV_006",
+      "EV_007"
+    ],
+    "forbidden": []
+  },
+  {
+    "employee_id": "JURY_CONTEXT_2",
+    "scenario": "Repeated missed offline architecture sessions; an online alternative exists",
+    "acceptable_first": [
+      "EV_007"
+    ],
+    "forbidden": [
+      "EV_005"
+    ]
+  },
+  {
+    "employee_id": "JURY_CONTEXT_3",
+    "scenario": "Advanced architecture is prerequisite-blocked and mentoring was completed",
+    "acceptable_first": [
+      "EV_005"
+    ],
+    "forbidden": [
+      "EV_006",
+      "EV_007",
+      "EV_037"
+    ]
+  }
+]

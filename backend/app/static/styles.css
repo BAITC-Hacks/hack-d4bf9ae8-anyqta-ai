@@ -10,6 +10,24 @@
   --danger: #b42318;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
+select { max-width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: #fff; font: inherit; }
+button:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid var(--brand); outline-offset: 3px; }
+details { margin-top: 18px; } summary { cursor: pointer; color: var(--brand-dark); font-weight: 700; }
+.goal-form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+.path-line { font-size: 1.1rem; font-weight: 650; }
+.recommendation-list { margin-top: 18px !important; }
+.recommendation > button, .activity-modal > button { margin-top: 20px; }
+.forecast { background: #f0f8f5; padding: 20px; border-radius: 12px; margin-top: 20px; }
+.success { padding: 20px; border: 1px solid #9ad6bb; border-radius: 14px; background: #e8f7ef; }
+.success p:last-child { margin-bottom: 0; }
+.loading-message::before { content: ""; display: inline-block; width: 1em; height: 1em; border: 2px solid var(--brand); border-right-color: transparent; border-radius: 50%; margin-right: 10px; vertical-align: middle; animation: spin .65s linear infinite; }
+.import-result { display: grid; gap: 10px; margin-bottom: 15px; }
+.trend-cell { position: relative; min-width: 110px; background: #edf1f7; border-radius: 5px; overflow: hidden; }
+.trend-fill { position: absolute; inset: 0 auto 0 0; background: #b8e5d3; }
+.trend-value { position: relative; padding: 3px 8px; display: block; font-size: .85rem; }
+@media (max-width: 720px) { .goal-form { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .loading-message::before, button.loading::after { animation: none !important; } }
 body { margin: 0; min-width: 320px; background: var(--canvas); color: var(--ink); font: 16px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 .shell { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 40px 0 64px; }
 .auth-card { width: min(470px, 100%); margin: 8vh auto; padding: 38px; background: var(--surface); border: 1px solid var(--line); border-radius: 20px; box-shadow: 0 16px 50px rgba(24, 39, 75, .08); }

@@ -11,7 +11,7 @@ from backend.app.recommendations import (
 )
 
 
-DATASET = Path("/Users/IZinekenov/Downloads/case_1/career_quest_dataset")
+DATASET = Path(__file__).resolve().parents[2] / "data" / "career_quest_dataset"
 
 
 class ValidSelector:
@@ -24,7 +24,6 @@ class InvalidSelector:
         return {"recommendations": [{"event_id": "EV_NOT_REAL"}]}
 
 
-@unittest.skipUnless(DATASET.exists(), "starter dataset is not available")
 class RecommendationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -64,7 +63,7 @@ class RecommendationTests(unittest.TestCase):
     def test_invalid_llm_selection_falls_back_to_rules(self):
         result = recommend_employee(self.connection, "E0001", selector=InvalidSelector())
         self.assertEqual(result["mode"], "rules_fallback")
-        self.assertIn("invalid", result["fallback_reason"])
+        self.assertIn("некорректный", result["fallback_reason"])
 
     def test_limit_is_constrained(self):
         with self.assertRaises(RecommendationError):

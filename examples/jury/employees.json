@@ -1,0 +1,109 @@
+{
+  "employees": [
+    {
+      "employee_id": "JURY_CONTEXT_1",
+      "full_name": "Synthetic Jury Profile 1",
+      "department": "Backend Development",
+      "role": "Backend Engineer",
+      "grade": "Middle",
+      "manager_id": null,
+      "hire_date": "2026-04-28",
+      "tenure_months": 36,
+      "work_format": "office",
+      "preferred_language": "kk",
+      "career_goal": {
+        "target_role": "Backend Engineer",
+        "target_grade": "Senior"
+      },
+      "skills": {
+        "SK_PYTHON": 4,
+        "SK_SQL": 4,
+        "SK_API_DESIGN": 4,
+        "SK_SYSTEM_DESIGN": 2,
+        "SK_CLOUD": 3,
+        "SK_CONTAINERS": 3,
+        "SK_CICD": 3,
+        "SK_APP_SECURITY": 3,
+        "SK_OBSERVABILITY": 3,
+        "SK_COMMUNICATION": 3,
+        "SK_TEAMWORK": 3,
+        "SK_PROBLEM_SOLVING": 4,
+        "SK_MENTORING": 3,
+        "SK_LEADERSHIP": 2,
+        "SK_STAKEHOLDER_MGMT": 2,
+        "SK_PUBLIC_SPEAKING": 0
+      },
+      "last_review_date": "2026-10-01"
+    },
+    {
+      "employee_id": "JURY_CONTEXT_2",
+      "full_name": "Synthetic Jury Profile 2",
+      "department": "Backend Development",
+      "role": "Backend Engineer",
+      "grade": "Middle",
+      "manager_id": null,
+      "hire_date": "2026-04-28",
+      "tenure_months": 36,
+      "work_format": "office",
+      "preferred_language": "kk",
+      "career_goal": {
+        "target_role": "Backend Engineer",
+        "target_grade": "Senior"
+      },
+      "skills": {
+        "SK_PYTHON": 4,
+        "SK_SQL": 4,
+        "SK_API_DESIGN": 4,
+        "SK_SYSTEM_DESIGN": 2,
+        "SK_CLOUD": 3,
+        "SK_CONTAINERS": 3,
+        "SK_CICD": 3,
+        "SK_APP_SECURITY": 3,
+        "SK_OBSERVABILITY": 3,
+        "SK_COMMUNICATION": 3,
+        "SK_TEAMWORK": 3,
+        "SK_PROBLEM_SOLVING": 4,
+        "SK_MENTORING": 3,
+        "SK_LEADERSHIP": 2,
+        "SK_STAKEHOLDER_MGMT": 2,
+        "SK_PUBLIC_SPEAKING": 2
+      },
+      "last_review_date": "2026-10-01"
+    },
+    {
+      "employee_id": "JURY_CONTEXT_3",
+      "full_name": "Synthetic Jury Profile 3",
+      "department": "Backend Development",
+      "role": "Backend Engineer",
+      "grade": "Middle",
+      "manager_id": null,
+      "hire_date": "2026-04-28",
+      "tenure_months": 36,
+      "work_format": "office",
+      "preferred_language": "kk",
+      "career_goal": {
+        "target_role": "Backend Engineer",
+        "target_grade": "Senior"
+      },
+      "skills": {
+        "SK_PYTHON": 4,
+        "SK_SQL": 4,
+        "SK_API_DESIGN": 2,
+        "SK_SYSTEM_DESIGN": 1,
+        "SK_CLOUD": 3,
+        "SK_CONTAINERS": 3,
+        "SK_CICD": 3,
+        "SK_APP_SECURITY": 3,
+        "SK_OBSERVABILITY": 3,
+        "SK_COMMUNICATION": 3,
+        "SK_TEAMWORK": 3,
+        "SK_PROBLEM_SOLVING": 4,
+        "SK_MENTORING": 2,
+        "SK_LEADERSHIP": 2,
+        "SK_STAKEHOLDER_MGMT": 2,
+        "SK_PUBLIC_SPEAKING": 2
+      },
+      "last_review_date": "2026-10-01"
+    }
+  ]
+}

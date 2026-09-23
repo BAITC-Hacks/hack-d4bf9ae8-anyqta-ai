@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
+import calendar
 from datetime import date
 from typing import Any
 
-from .career import calculate_trajectory
-from .importer import ImportValidationError, import_package, load_profile_package_from_text
-from .recommendations import DEFAULT_AS_OF_DATE, recommend_employee
+from .career import CareerCalculationError, DEFAULT_AS_OF_DATE, calculate_trajectory
+from .importer import ImportValidationError, import_package, load_profile_package_from_text, preview_package
 
 
 class HrError(ValueError):
@@ -25,7 +25,7 @@ def _six_months_before(as_of_date: str) -> str:
     if month <= 0:
         month += 12
         year -= 1
-    return date(year, month, point.day).isoformat()
+    return date(year, month, min(point.day, calendar.monthrange(year, month)[1])).isoformat()
 
 
 def filter_options(connection: sqlite3.Connection) -> dict[str, list[str]]:
@@ -55,7 +55,8 @@ def _employees(connection: sqlite3.Connection, filters: dict[str, str]) -> list[
     return connection.execute(statement, values).fetchall()
 
 
-def _participation(connection: sqlite3.Connection, employee_id: str, since: str) -> tuple[int, int]:
+def _participation(connection: sqlite3.Connection, employee_id: str, since: str,
+                   until: str = DEFAULT_AS_OF_DATE) -> tuple[int, int]:
     row = connection.execute(
         """
         SELECT
@@ -66,9 +67,9 @@ def _participation(connection: sqlite3.Connection, employee_id: str, since: str)
                     AND history.activity_date >= ? THEN 1 ELSE 0 END) AS voluntary_noncompletion
         FROM activity_history AS history
         JOIN events ON events.event_id = history.event_id
-        WHERE history.employee_id = ?
+        WHERE history.employee_id = ? AND history.activity_date <= ?
         """,
-        (since, since, employee_id),
+        (since, since, employee_id, until),
     ).fetchone()
     return int(row["voluntary_completed"] or 0), int(row["voluntary_noncompletion"] or 0)
 
@@ -91,9 +92,20 @@ def hr_dashboard(connection: sqlite3.Connection, filters: dict[str, str] | None 
     gaps: dict[str, dict[str, Any]] = {}
     people: list[dict[str, Any]] = []
     needs_support = 0
+    departments: dict[str, dict[str, Any]] = {}
+    invalid_profiles = []
     for employee in rows:
-        trajectory = calculate_trajectory(connection, employee["employee_id"])
-        completed, noncompletion = _participation(connection, employee["employee_id"], since)
+        try:
+            trajectory = calculate_trajectory(connection, employee["employee_id"], as_of_date)
+        except CareerCalculationError:
+            invalid_profiles.append({"employee_id": employee["employee_id"], "full_name": employee["full_name"],
+                                     "message": "Проверьте требования карьерной цели этого профиля."})
+            continue
+        completed, noncompletion = _participation(connection, employee["employee_id"], since, as_of_date)
+        department = departments.setdefault(employee["department"], {"department": employee["department"],
+            "employees": 0, "with_critical_gaps": 0})
+        department["employees"] += 1
+        department["with_critical_gaps"] += int(trajectory["critical_gaps_remaining"] > 0)
         signals = _support_signals(completed, noncompletion, since)
         if signals:
             needs_support += 1
@@ -119,6 +131,8 @@ def hr_dashboard(connection: sqlite3.Connection, filters: dict[str, str] | None 
                 "voluntary_noncompletion_since": noncompletion,
             }
         )
+    for department in departments.values():
+        department["critical_gap_percent"] = round(100 * department["with_critical_gaps"] / department["employees"], 1)
     return {
         "filters": filters,
         "filter_options": filter_options(connection),
@@ -127,6 +141,9 @@ def hr_dashboard(connection: sqlite3.Connection, filters: dict[str, str] | None 
         "summary": {"employees": len(people), "needs_support": needs_support, "competencies_with_gaps": len(gaps)},
         "competency_gaps": sorted(gaps.values(), key=lambda item: (-item["critical_gap_count"], -item["employees_affected"], -item["total_gap"], item["skill_name"])),
         "employees": people,
+        "department_gaps": sorted(departments.values(), key=lambda item: item["department"]),
+        "participation_trend": participation_trend(connection, {row["employee_id"] for row in rows}, as_of_date),
+        "invalid_profiles": invalid_profiles,
     }
 
 
@@ -138,23 +155,54 @@ def hr_employee_detail(connection: sqlite3.Connection, employee_id: str,
     ).fetchone()
     if employee is None:
         raise HrError("Employee not found")
-    trajectory = calculate_trajectory(connection, employee_id)
-    recommendations = recommend_employee(connection, employee_id, as_of_date=as_of_date)
-    completed, noncompletion = _participation(connection, employee_id, _six_months_before(as_of_date))
+    trajectory = calculate_trajectory(connection, employee_id, as_of_date)
+    completed, noncompletion = _participation(connection, employee_id, _six_months_before(as_of_date), as_of_date)
     return {
         "employee": dict(employee), "trajectory": trajectory,
-        "recommendations": recommendations["recommendations"],
-        "recommendation_mode": recommendations["mode"],
+        "history": participation_history(connection, employee_id, as_of_date),
         "participation": {"voluntary_completed": completed, "voluntary_noncompletion": noncompletion},
     }
 
 
 def import_hr_profile_package(connection: sqlite3.Connection, employees_json: str,
-                              history_csv: str, source_name: str = "HR upload") -> dict[str, int]:
+                              history_csv: str, source_name: str = "HR upload",
+                              preview: bool = False) -> dict[str, Any]:
     """Atomically import a jury package in the original JSON/CSV schema."""
     try:
         package = load_profile_package_from_text(employees_json, history_csv, source_name)
-        import_package(connection, package, "profiles", source_name)
+        if not package.employees and not package.history:
+            raise ImportValidationError("Пакет не содержит профилей или истории.")
+        result = preview_package(connection, package) if preview else import_package(connection, package, "profiles", source_name)
     except ImportValidationError as error:
         raise HrError(str(error)) from error
-    return {"employees_imported": len(package.employees), "history_records_imported": len(package.history)}
+    return {**result, "preview": preview}
+
+
+def participation_history(connection, employee_id, as_of_date=DEFAULT_AS_OF_DATE):
+    return [dict(row) for row in connection.execute(
+        "SELECT h.record_id, h.event_id, h.activity_date, h.status, h.completion_pct, h.feedback_rating, "
+        "e.title, e.format, e.mandatory FROM activity_history h JOIN events e USING(event_id) "
+        "WHERE h.employee_id = ? AND h.activity_date <= ? ORDER BY h.activity_date DESC, h.record_id",
+        (employee_id, as_of_date),
+    )]
+
+
+def participation_trend(connection, employee_ids, as_of_date):
+    point = date.fromisoformat(as_of_date)
+    months = []
+    for offset in range(11, -1, -1):
+        year, month = divmod(point.year * 12 + point.month - 1 - offset, 12)
+        months.append(f"{year:04d}-{month + 1:02d}")
+    counts = {month: {"month": month, "completed": 0, "noncompletion": 0, "in_progress": 0} for month in months}
+    for row in connection.execute(
+        "SELECT h.employee_id, h.activity_date, h.status FROM activity_history h JOIN events e USING(event_id) "
+        "WHERE e.mandatory = 0 AND h.activity_date BETWEEN ? AND ?",
+        (months[0] + "-01", as_of_date),
+    ):
+        if row["employee_id"] in employee_ids:
+            category = "completed" if row["status"] == "completed" else "in_progress" if row["status"] == "in_progress" else "noncompletion"
+            counts[row["activity_date"][:7]][category] += 1
+    for value in counts.values():
+        finished = value["completed"] + value["noncompletion"]
+        value["completion_percent"] = round(100 * value["completed"] / finished, 1) if finished else None
+    return list(counts.values())

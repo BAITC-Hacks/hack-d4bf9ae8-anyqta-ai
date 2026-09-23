@@ -12,12 +12,11 @@ from backend.app.importer import import_package, load_full_package
 from backend.app.web import WebApplication
 
 
-DATASET = Path("/Users/IZinekenov/Downloads/case_1/career_quest_dataset")
+DATASET = Path(__file__).resolve().parents[2] / "data" / "career_quest_dataset"
 SESSION_SECRET = "hr-test-session-secret-that-is-at-least-32-characters"
 HISTORY_FIELDS = ["record_id", "employee_id", "event_id", "date", "due_date", "status", "completion_pct", "score", "feedback_rating", "assigned_by"]
 
 
-@unittest.skipUnless(DATASET.exists(), "starter dataset is not available")
 class HrOperationsTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -41,11 +40,11 @@ class HrOperationsTests(unittest.TestCase):
         self.assertTrue(result["employees"])
         self.assertTrue(all(person["grade"] == "Junior" for person in result["employees"]))
 
-    def test_hr_detail_contains_trajectory_and_recommendations(self):
+    def test_hr_detail_contains_trajectory_and_history(self):
         result = hr_employee_detail(self.connection, "E0001")
         self.assertEqual(result["employee"]["employee_id"], "E0001")
         self.assertEqual(result["trajectory"]["target"]["grade"], "Middle")
-        self.assertTrue(result["recommendations"])
+        self.assertTrue(result["history"])
 
     def test_hr_import_adds_jury_profile_without_filesystem_write(self):
         source = json.loads((DATASET / "employees.json").read_text(encoding="utf-8"))["employees"][0]
@@ -56,7 +55,9 @@ class HrOperationsTests(unittest.TestCase):
         stream = io.StringIO()
         csv.DictWriter(stream, fieldnames=HISTORY_FIELDS).writeheader()
         result = import_hr_profile_package(self.connection, employee_json, stream.getvalue(), "test upload")
-        self.assertEqual(result, {"employees_imported": 1, "history_records_imported": 0})
+        self.assertEqual(result["employees_imported"], 1)
+        self.assertEqual(result["history_records_imported"], 0)
+        self.assertEqual(result["profiles"][0]["employee_id"], "E9999")
         self.assertEqual(hr_employee_detail(self.connection, "E9999")["employee"]["full_name"], "Jury Candidate")
 
     def test_web_application_blocks_employee_from_hr_operations(self):
