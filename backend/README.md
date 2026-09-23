@@ -58,3 +58,32 @@ python3 -m backend.app.career \
 For a profile with `career_goal`, its target role and grade are used. When the
 goal is absent, the next grade in the current role is used. A Lead without a
 goal receives `goal_required` instead of a fictional promotion target.
+
+## Get development recommendations
+
+The recommendation command filters out mandatory, unavailable, already
+completed/current and prerequisite-blocked events before ranking only actions
+that reduce the employee's target gaps. `EV_036`, the regular club specified in
+the starter kit, is the documented exception and may repeat after completion.
+It takes critical requirements,
+expected skill growth, duration and comparable participation history into
+account.
+
+```bash
+python3 -m backend.app.recommendations \
+  --database ./var/career_quest.db \
+  --employee-id E0001
+```
+
+Without model credentials it returns an explicitly labelled `rules_fallback`.
+For an OpenAI-compatible endpoint, set all three variables before the command:
+
+```bash
+export LLM_API_URL="https://provider.example/v1/chat/completions"
+export LLM_API_KEY="..."
+export LLM_MODEL="..."
+```
+
+The model can select only verified event IDs; it cannot change skills, bypass
+audience or prerequisites, or invent an event. Invalid or slow model replies
+fall back to the rules-based result.
