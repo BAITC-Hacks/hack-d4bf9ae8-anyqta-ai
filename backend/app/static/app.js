@@ -38,8 +38,31 @@ async function withLoading(button, loadingText, action) {
   finally { button.disabled = false; button.classList.remove("loading"); button.textContent = originalText; }
 }
 
+function renderRecommendations(recommendations, mode, onStart) {
+  const content = element("div");
+  if (mode === "llm") content.append(element("p", "mode-note", "Рекомендации подобраны AI на основе карьерной цели, разрывов по навыкам и истории участия."));
+  if (mode === "rules_fallback") content.append(element("p", "mode-note", "Рекомендации построены проверяемыми правилами."));
+  const list = element("div", "recommendation-list");
+  if (!recommendations.length) list.append(element("p", "muted", "Сейчас нет доступных добровольных активностей, которые сокращают текущие разрывы."));
+  recommendations.forEach(item => {
+    const card = element("article", "recommendation");
+    card.append(element("h3", "", item.title), element("p", "event-meta", `${item.format} · ${item.duration_hours} ч${item.next_session ? ` · ближайшая сессия ${item.next_session}` : " · доступно в своём темпе"}`));
+    const evidence = element("ul", "evidence");
+    item.evidence.forEach(reason => evidence.append(element("li", "", reason)));
+    card.append(evidence);
+    if (onStart) {
+      const start = element("button", "", "Начать активность");
+      start.addEventListener("click", () => onStart(item, start));
+      card.append(start);
+    }
+    list.append(card);
+  });
+  content.append(list);
+  return content;
+}
+
 function renderDashboard(data) {
-  const { trajectory, recommendations, recommendation_mode: mode, recommendation_notice: notice, active_enrollments: activeEnrollments, demo_mode: demoMode, is_demo_user: isDemoUser } = data;
+  const { trajectory, recommendations, recommendation_mode: mode, active_enrollments: activeEnrollments, demo_mode: demoMode, is_demo_user: isDemoUser } = data;
   document.querySelector("#employee-name").textContent = trajectory.employee.full_name;
   document.querySelector("#user-role").textContent = "Сотрудник";
   employeeDemoMode = demoMode;
@@ -85,17 +108,8 @@ function renderDashboard(data) {
 
   const recommendationsCard = element("section", "card");
   recommendationsCard.append(element("h2", "", "Следующие шаги"));
-  if (mode === "rules_fallback") recommendationsCard.append(element("p", "mode-note", "Рекомендации построены проверяемыми правилами. Полный AI-режим подключается через конфигурацию модели."));
-  if (notice && mode !== "rules_fallback") recommendationsCard.append(element("p", "mode-note", notice));
-  const recommendationList = element("div", "recommendation-list");
-  if (!recommendations.length) recommendationList.append(element("p", "muted", "Сейчас нет доступных добровольных активностей, которые сокращают текущие разрывы."));
-  recommendations.forEach(item => {
-    const card = element("article", "recommendation");
-    card.append(element("h3", "", item.title), element("p", "event-meta", `${item.format} · ${item.duration_hours} ч${item.next_session ? ` · ближайшая сессия ${item.next_session}` : " · доступно в своём темпе"}`));
-    const evidence = element("ul", "evidence"); item.evidence.forEach(reason => evidence.append(element("li", "", reason))); card.append(evidence);
-    const start = element("button", "", "Начать активность");
-    start.addEventListener("click", () => startActivity(item, start)); card.append(start); recommendationList.append(card);
-  }); recommendationsCard.append(recommendationList); dashboard.append(recommendationsCard); root.append(dashboard);
+  recommendationsCard.append(renderRecommendations(recommendations, mode, startActivity));
+  dashboard.append(recommendationsCard); root.append(dashboard);
 
   if (activeEnrollments.length) {
     const active = element("section", "card"); active.append(element("h2", "", "В процессе"));
@@ -191,7 +205,7 @@ function renderHrDetail(detail) {
   const gaps = detail.trajectory.skill_gaps.filter(item => item.gap > 0).slice(0, 8);
   const list = element("ul", "gap-list"); gaps.forEach(item => list.append(element("li", "", `${item.skill_name}: ${item.current_level}/${item.required_level}${item.is_critical ? " · критический" : ""}`))); card.append(list);
   const rec = element("div", ""); rec.append(element("h3", "", "Доступные следующие шаги"));
-  detail.recommendations.forEach(item => rec.append(element("p", "", item.title))); card.append(rec);
+  rec.append(renderRecommendations(detail.recommendations, detail.recommendation_mode)); card.append(rec);
   const back = element("button", "secondary", "Вернуться к обзору"); back.addEventListener("click", () => withLoading(back, "Загружаем…", showHr)); card.append(back);
   root.replaceChildren(card);
 }

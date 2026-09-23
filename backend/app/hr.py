@@ -8,7 +8,7 @@ from typing import Any
 
 from .career import calculate_trajectory
 from .importer import ImportValidationError, import_package, load_profile_package_from_text
-from .recommendations import DEFAULT_AS_OF_DATE, recommend_employee
+from .recommendations import DEFAULT_AS_OF_DATE, LlmSelector, recommend_employee
 
 
 class HrError(ValueError):
@@ -131,7 +131,8 @@ def hr_dashboard(connection: sqlite3.Connection, filters: dict[str, str] | None 
 
 
 def hr_employee_detail(connection: sqlite3.Connection, employee_id: str,
-                       as_of_date: str = DEFAULT_AS_OF_DATE) -> dict[str, Any]:
+                       as_of_date: str = DEFAULT_AS_OF_DATE,
+                       selector: LlmSelector | None = None) -> dict[str, Any]:
     employee = connection.execute(
         "SELECT employee_id, full_name, department, role, grade, work_format, preferred_language FROM employees WHERE employee_id = ?",
         (employee_id,),
@@ -139,12 +140,15 @@ def hr_employee_detail(connection: sqlite3.Connection, employee_id: str,
     if employee is None:
         raise HrError("Employee not found")
     trajectory = calculate_trajectory(connection, employee_id)
-    recommendations = recommend_employee(connection, employee_id, as_of_date=as_of_date)
+    recommendations = recommend_employee(
+        connection, employee_id, as_of_date=as_of_date, selector=selector
+    )
     completed, noncompletion = _participation(connection, employee_id, _six_months_before(as_of_date))
     return {
         "employee": dict(employee), "trajectory": trajectory,
         "recommendations": recommendations["recommendations"],
         "recommendation_mode": recommendations["mode"],
+        "recommendation_notice": recommendations["fallback_reason"],
         "participation": {"voluntary_completed": completed, "voluntary_noncompletion": noncompletion},
     }
 

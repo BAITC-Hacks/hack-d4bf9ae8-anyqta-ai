@@ -138,7 +138,9 @@ class WebApplication:
             raise PermissionError("HR access required")
         connection = self._connection()
         try:
-            return hr_employee_detail(connection, employee_id)
+            return hr_employee_detail(
+                connection, employee_id, selector=selector_from_environment()
+            )
         finally:
             connection.close()
 

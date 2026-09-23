@@ -160,3 +160,10 @@ The upload is validated as one atomic package. If it contains unknown IDs,
 invalid dates, duplicate records or another schema error, nothing is written to
 the database. A successful upload immediately appears in the HR filters and
 can be opened in the detail view without creating an employee login.
+
+HR employee details, including newly imported jury profiles, use the same
+`LLM_API_URL`, `LLM_API_KEY` and `LLM_MODEL` configuration as the employee cabinet.
+Recommendation cards show the AI/rules mode, activity format and schedule, and
+the skill and participation evidence behind each step. If the model is absent,
+unavailable or returns an invalid selection, verified rules-based recommendations
+remain available. The aggregate HR overview does not call the model.
