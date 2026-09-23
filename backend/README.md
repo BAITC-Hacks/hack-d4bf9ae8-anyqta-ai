@@ -41,3 +41,20 @@ unchanged.
 ```bash
 python3 -m unittest discover -s backend/tests -v
 ```
+
+## Calculate a career trajectory
+
+After importing the starter kit, calculate the factual basis for a
+recommendation. The output contains the effective skills, a trace of skill
+updates after the last review, target requirements, critical skills, gaps and
+coverage percentage.
+
+```bash
+python3 -m backend.app.career \
+  --database ./var/career_quest.db \
+  --employee-id E0001
+```
+
+For a profile with `career_goal`, its target role and grade are used. When the
+goal is absent, the next grade in the current role is used. A Lead without a
+goal receives `goal_required` instead of a fictional promotion target.
