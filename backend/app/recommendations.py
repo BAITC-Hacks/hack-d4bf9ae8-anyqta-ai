@@ -8,6 +8,7 @@ import os
 import sqlite3
 import urllib.error
 import urllib.request
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
 from datetime import date
@@ -186,30 +187,38 @@ def _event_changes(connection: sqlite3.Connection, event_id: str, skills: dict[s
     return changes, critical_reduction, total_reduction
 
 
-def eligible_candidates(connection: sqlite3.Connection, employee_id: str,
-                        as_of_date: str = DEFAULT_AS_OF_DATE) -> list[Candidate]:
-    """Filter unsafe events and score only useful, accessible voluntary actions."""
-    as_of_date = _as_of(as_of_date)
-    trajectory = calculate_trajectory(connection, employee_id)
-    if trajectory["trajectory_status"] != "ready":
-        return []
+def _assess_candidates(connection: sqlite3.Connection, trajectory: dict[str, Any],
+                       as_of_date: str) -> tuple[list[Candidate], Counter[str]]:
+    """Return candidates and the first blocking reason for each useful event."""
     employee = trajectory["employee"]
+    employee_id = employee["employee_id"]
     gaps = {item["skill_id"]: item for item in trajectory["skill_gaps"]}
     skills = trajectory["effective_skills"]
     candidates: list[Candidate] = []
+    blocked: Counter[str] = Counter()
     for event in connection.execute(
         "SELECT event_id, title, type, format AS event_format, duration_hours, mandatory FROM events ORDER BY event_id"
     ):
         if event["mandatory"]:
             continue
+        changes, critical_reduction, total_reduction = _event_changes(
+            connection, event["event_id"], skills, gaps
+        )
+        if total_reduction == 0:
+            continue
         if not _is_targeted(connection, event["event_id"], employee["role"], employee["grade"]):
+            blocked["audience_mismatch"] += 1
             continue
         if not _prerequisites_met(connection, event["event_id"], skills):
+            blocked["prerequisites_unmet"] += 1
             continue
         # The starter-kit README explicitly allows the regular EV_036 club to
         # repeat after completion. An active enrollment always remains blocked.
-        blocked_statuses = ("in_progress",) if event["event_id"] == "EV_036" else ("completed", "in_progress")
-        if _has_history_status(connection, employee_id, event["event_id"], blocked_statuses):
+        if _has_history_status(connection, employee_id, event["event_id"], ("in_progress",)):
+            blocked["in_progress"] += 1
+            continue
+        if event["event_id"] != "EV_036" and _has_history_status(connection, employee_id, event["event_id"], ("completed",)):
+            blocked["already_completed"] += 1
             continue
         next_session = connection.execute(
             "SELECT MIN(session_date) FROM event_sessions WHERE event_id = ? AND session_date >= ?",
@@ -217,11 +226,7 @@ def eligible_candidates(connection: sqlite3.Connection, employee_id: str,
         ).fetchone()[0]
         has_self_paced = event["event_format"] == "self_paced"
         if not has_self_paced and next_session is None:
-            continue
-        changes, critical_reduction, total_reduction = _event_changes(
-            connection, event["event_id"], skills, gaps
-        )
-        if total_reduction == 0:
+            blocked["no_upcoming_session"] += 1
             continue
         completed, negative, negative_format = _history_signals(
             connection, employee_id, event["type"], event["event_format"]
@@ -253,7 +258,51 @@ def eligible_candidates(connection: sqlite3.Connection, employee_id: str,
                 negative_same_format=negative_format,
             )
         )
-    return sorted(candidates, key=lambda item: (-item.score, item.duration_hours, item.event_id))
+    return sorted(candidates, key=lambda item: (-item.score, item.duration_hours, item.event_id)), blocked
+
+
+def eligible_candidates(connection: sqlite3.Connection, employee_id: str,
+                        as_of_date: str = DEFAULT_AS_OF_DATE) -> list[Candidate]:
+    """Filter unsafe events and score only useful, accessible voluntary actions."""
+    as_of_date = _as_of(as_of_date)
+    trajectory = calculate_trajectory(connection, employee_id)
+    if trajectory["trajectory_status"] != "ready":
+        return []
+    candidates, _ = _assess_candidates(connection, trajectory, as_of_date)
+    return candidates
+
+
+def recommendation_availability(connection: sqlite3.Connection, employee_id: str,
+                                as_of_date: str = DEFAULT_AS_OF_DATE) -> dict[str, Any]:
+    """Explain next-step availability using the same rules as recommendations, without AI."""
+    as_of_date = _as_of(as_of_date)
+    trajectory = calculate_trajectory(connection, employee_id)
+    result: dict[str, Any] = {"has_next_step": False, "eligible_event_count": 0, "reasons": []}
+    if trajectory["trajectory_status"] != "ready":
+        return {**result, "status": "goal_required", "reasons": [{
+            "code": "goal_required", "message": "Карьерная цель не задана. Согласуйте целевую роль и грейд.",
+        }]}
+    if not any(gap["gap"] > 0 for gap in trajectory["skill_gaps"]):
+        return {**result, "status": "target_covered", "reasons": [{
+            "code": "target_covered", "message": "Требования цели по навыкам уже покрыты. Обсудите следующую цель.",
+        }]}
+    candidates, blocked = _assess_candidates(connection, trajectory, as_of_date)
+    if candidates:
+        return {**result, "status": "available", "has_next_step": True, "eligible_event_count": len(candidates)}
+    messages = {
+        "audience_mismatch": "Активности для оставшихся разрывов не подходят по текущей роли или грейду.",
+        "prerequisites_unmet": "Не выполнены предварительные требования по навыкам. Нужен подготовительный шаг.",
+        "in_progress": "Подходящие активности уже в процессе. Дождитесь завершения или предложите поддержку.",
+        "already_completed": "Подходящие активности уже пройдены и не допускают повторения. Нужна другая программа.",
+        "no_upcoming_session": "Для подходящих активностей нет предстоящих сессий. Уточните расписание.",
+    }
+    reasons = [
+        {"code": code, "message": message, "event_count": blocked[code]}
+        for code, message in messages.items() if blocked[code]
+    ]
+    if not reasons:
+        reasons = [{"code": "catalog_gap", "message": "В каталоге нет добровольных активностей, которые дают прирост по оставшимся разрывам. Нужна новая программа."}]
+    return {**result, "status": "no_eligible_events", "reasons": reasons}
 
 
 def _facts_for_selector(trajectory: dict[str, Any], candidates: list[Candidate]) -> dict[str, Any]:

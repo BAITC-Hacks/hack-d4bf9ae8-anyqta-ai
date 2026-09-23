@@ -127,6 +127,27 @@ Without `SESSION_SECRET`, the server generates an in-memory secret for the
 current local run; active sessions expire when the server restarts. HR can sign
 in now; its analytics and import interface are added in stage 7.
 
+## Employee profile, history and career goal
+
+The employee cabinet shows the current role and grade, department, tenure,
+work format and last assessment date. The complete skill table includes all
+60 catalog skills, assessed/current levels, target requirements and critical
+gaps. Search by skill name/category or show only target skills and gaps.
+
+The full activity history is searchable and filterable by all six statuses.
+It includes participation dates, deadlines, completion percentage, scores,
+feedback and the calculated skill changes for each completion. Earlier
+completions are marked as included in the last assessment. Dataset participation
+dates are not presented as exact completion dates; app completions show their
+separately recorded completion date. HR can inspect the same skills and history.
+
+Employees can choose a target role/grade from the catalog under **«Изменить
+цель»**, including a cross-role goal. Saving refreshes requirements, coverage
+and recommendations. Clearing the goal restores the default next grade;
+a Lead without a goal keeps the full profile/history and can select a new goal.
+Goal changes persist across restarts and import retries. HR views are read-only
+for goals, and the employee API always updates the signed-in employee only.
+
 ## Activity lifecycle in the demo
 
 In the employee cabinet, use **«Начать активность»** on a recommendation. It
@@ -140,8 +161,9 @@ Set `DEMO_MODE=false` to hide the completion simulation. A real LMS integration
 is intentionally outside the MVP.
 
 Each employee demo account also has **«Сбросить демо»**. It is available only
-to that account while `DEMO_MODE=true` and removes only activity records created
-through the application for that employee. The original starter-kit history,
+to that account while `DEMO_MODE=true`, removes activity records created
+through the application for that employee and restores their original career
+goal. The original starter-kit history,
 other demo accounts and HR-imported profiles are preserved.
 
 ## HR overview and jury-data upload
@@ -152,6 +174,12 @@ contains:
 - a private aggregate of skill gaps, filterable by department, role and grade;
 - explainable support signals based on voluntary activity participation during
   the displayed six-month period;
+- a count and filter for employees without a next step, with reasons such as a
+  missing goal, unmet prerequisites, completed/current activities, no upcoming
+  session or no suitable catalog activity;
+- participation by activity: all six statuses, participation records, unique
+  employees and the percentage of completed records, with mandatory activities
+  labelled separately;
 - an employee detail view with trajectory and currently available steps;
 - an upload form for `employees.json` and `activity_history.csv` in the
   starter-kit schema.
@@ -160,3 +188,24 @@ The upload is validated as one atomic package. If it contains unknown IDs,
 invalid dates, duplicate records or another schema error, nothing is written to
 the database. A successful upload immediately appears in the HR filters and
 can be opened in the detail view without creating an employee login.
+
+HR employee details, including newly imported jury profiles, use the same
+`LLM_API_URL`, `LLM_API_KEY` and `LLM_MODEL` configuration as the employee cabinet.
+Recommendation cards show the AI/rules mode, activity format and schedule, and
+the skill and participation evidence behind each step. If the model is absent,
+unavailable or returns an invalid selection, verified rules-based recommendations
+remain available. The aggregate HR overview does not call the model.
+
+Department, role, grade and next-step filters apply to the entire overview,
+including skill gaps, support signals and activity participation. Next-step
+availability uses the recommendation engine's eligibility checks; a covered
+target is distinguished from a missing goal or an unavailable activity. When
+an activity has several blockers, the overview reports its first blocking rule.
+
+Participation uses the inclusive interval from six calendar months before the
+displayed snapshot date through that date. Repeat participation counts as
+separate records; unique employees are counted once per activity. Completion
+percentage is completed records divided by all records in that interval and
+cohort, including unfinished records. Activities with no records remain visible
+with zero counts and no percentage. These are participation measures, not
+employee performance scores.

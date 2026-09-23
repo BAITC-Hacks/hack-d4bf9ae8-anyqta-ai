@@ -192,7 +192,7 @@ def complete_activity(connection: sqlite3.Connection, employee_id: str, enrollme
 
 
 def reset_demo_employee(connection: sqlite3.Connection, employee_id: str) -> dict[str, int]:
-    """Remove only activity records created by this app for one demo employee."""
+    """Remove app-created activity records and restore this employee's original goal."""
     with connection:
         active = connection.execute(
             "SELECT COUNT(*) FROM activity_enrollments WHERE employee_id = ?", (employee_id,)
@@ -219,4 +219,11 @@ def reset_demo_employee(connection: sqlite3.Connection, employee_id: str) -> dic
             """,
             (employee_id, employee_id),
         )
+        employee = connection.execute("SELECT source_json FROM employees WHERE employee_id = ?", (employee_id,)).fetchone()
+        if employee is not None:
+            goal = json.loads(employee["source_json"]).get("career_goal") or {}
+            connection.execute(
+                "UPDATE employees SET target_role = ?, target_grade = ? WHERE employee_id = ?",
+                (goal.get("target_role"), goal.get("target_grade"), employee_id),
+            )
     return {"removed_enrollments": active, "removed_activity_records": records}
