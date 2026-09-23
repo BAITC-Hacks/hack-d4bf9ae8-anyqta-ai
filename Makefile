@@ -1,4 +1,4 @@
-.PHONY: demo-up demo-down demo-logs demo-status demo-reset test
+.PHONY: demo-up demo-down demo-logs demo-status demo-reset test acceptance
 
 demo-up:
 	docker compose up --build -d
@@ -17,3 +17,6 @@ demo-reset:
 
 test:
 	python3 -m unittest discover -s backend/tests -v
+
+acceptance:
+	python3 scripts/acceptance.py

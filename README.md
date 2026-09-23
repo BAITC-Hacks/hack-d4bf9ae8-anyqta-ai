@@ -58,6 +58,7 @@ docker compose ps
 docker compose logs --tail=100 career-quest
 docker compose down
 make demo-reset
+make acceptance
 ```
 
 `docker compose down` сохраняет локальный прогресс в Docker volume. `make
@@ -66,3 +67,4 @@ demo-reset` потребует ввести `reset-demo`, удалит толь�
 
 Подробности команд разработки находятся в [backend/README.md](backend/README.md).
 Полный план и принятые решения — в [analysis.md](analysis.md).
+Полный чек-лист финальной приёмки — в [docs/acceptance.md](docs/acceptance.md).
