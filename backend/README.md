@@ -107,3 +107,24 @@ python3 -m backend.app.demo_seed --database ./var/career_quest.db
 The command is idempotent: it only creates missing accounts. If a documented
 username already belongs to a different account or password, it fails instead
 of changing that account. Passwords are stored as salted PBKDF2-SHA256 hashes.
+
+## Run the employee web cabinet
+
+After importing the starter kit and creating demo accounts, start the local
+web server:
+
+```bash
+python3 -m backend.app.web --database ./var/career_quest.db
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000) and sign in using an
+employee demo account. The session is an HttpOnly, signed cookie. Set a stable
+secret of at least 32 characters before deploying beyond a local demo:
+
+```bash
+export SESSION_SECRET="replace-with-a-long-random-secret"
+```
+
+Without `SESSION_SECRET`, the server generates an in-memory secret for the
+current local run; active sessions expire when the server restarts. HR can sign
+in now; its analytics and import interface are added in stage 7.

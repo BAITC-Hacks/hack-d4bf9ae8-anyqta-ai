@@ -1,0 +1,220 @@
+"""Local web server for the Career Quest employee cabinet."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import mimetypes
+import os
+import secrets
+import sqlite3
+from http import HTTPStatus
+from http.cookies import SimpleCookie
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+from .auth import AuthenticationError, User, authenticate, issue_session, read_session
+from .career import CareerCalculationError, calculate_trajectory
+from .db import connect, migrate
+from .recommendations import RecommendationError, recommend_employee
+
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+MAX_BODY_BYTES = 10_000
+
+
+class WebApplication:
+    """Request-independent operations used by HTTP handlers and tests."""
+
+    def __init__(self, database_path: str | Path, session_secret: str):
+        if len(session_secret) < 32:
+            raise ValueError("SESSION_SECRET must contain at least 32 characters")
+        self.database_path = str(database_path)
+        self.session_secret = session_secret
+        connection = connect(self.database_path)
+        try:
+            migrate(connection)
+        finally:
+            connection.close()
+
+    def _connection(self) -> sqlite3.Connection:
+        return connect(self.database_path)
+
+    def login(self, username: str, password: str) -> tuple[User, str]:
+        connection = self._connection()
+        try:
+            user = authenticate(connection, username, password)
+            return user, issue_session(user, self.session_secret)
+        finally:
+            connection.close()
+
+    def user_from_token(self, token: str) -> User:
+        claims = read_session(token, self.session_secret)
+        connection = self._connection()
+        try:
+            row = connection.execute("SELECT * FROM users WHERE user_id = ?", (claims["sub"],)).fetchone()
+            if row is None:
+                raise AuthenticationError("Invalid session")
+            user = User(
+                user_id=row["user_id"], username=row["username"], access_role=row["access_role"],
+                employee_id=row["employee_id"], is_demo=bool(row["is_demo"]),
+            )
+            if user.access_role != claims["role"] or user.employee_id != claims["employee_id"]:
+                raise AuthenticationError("Invalid session")
+            return user
+        finally:
+            connection.close()
+
+    def employee_dashboard(self, user: User) -> dict[str, Any]:
+        if user.access_role != "employee" or user.employee_id is None:
+            raise PermissionError("The employee cabinet is available to employee accounts only")
+        connection = self._connection()
+        try:
+            trajectory = calculate_trajectory(connection, user.employee_id)
+            recommendation_result = recommend_employee(connection, user.employee_id)
+            return {
+                "user": {"username": user.username, "access_role": user.access_role},
+                "trajectory": trajectory,
+                "recommendations": recommendation_result["recommendations"],
+                "recommendation_mode": recommendation_result["mode"],
+                "recommendation_notice": recommendation_result["fallback_reason"],
+            }
+        finally:
+            connection.close()
+
+
+class CareerQuestHandler(BaseHTTPRequestHandler):
+    """Minimal same-origin JSON API and static file handler."""
+
+    application: WebApplication
+    server_version = "CareerQuest/0.1"
+
+    def log_message(self, format: str, *args: object) -> None:
+        # Keep development output concise and avoid logging request bodies.
+        print(f"{self.address_string()} - {format % args}")
+
+    def _json(self, status: HTTPStatus, payload: dict[str, Any], cookie: str | None = None) -> None:
+        body = b"" if status == HTTPStatus.NO_CONTENT else json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.end_headers()
+        if body:
+            self.wfile.write(body)
+
+    def _read_json(self) -> dict[str, Any]:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as error:
+            raise ValueError("Invalid request body") from error
+        if length <= 0 or length > MAX_BODY_BYTES:
+            raise ValueError("Invalid request body")
+        try:
+            payload = json.loads(self.rfile.read(length))
+        except json.JSONDecodeError as error:
+            raise ValueError("Request body must be valid JSON") from error
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be an object")
+        return payload
+
+    def _session_user(self) -> User:
+        cookies = SimpleCookie(self.headers.get("Cookie"))
+        session = cookies.get("cq_session")
+        if session is None:
+            raise AuthenticationError("Authentication required")
+        return self.application.user_from_token(session.value)
+
+    def _serve_static(self, filename: str) -> None:
+        path = STATIC_DIR / filename
+        if not path.is_file():
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        content = path.read_bytes()
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(content)
+
+    def do_GET(self) -> None:  # noqa: N802 - required BaseHTTPRequestHandler name
+        path = urlparse(self.path).path
+        if path == "/":
+            self._serve_static("index.html")
+        elif path == "/app.js":
+            self._serve_static("app.js")
+        elif path == "/styles.css":
+            self._serve_static("styles.css")
+        elif path == "/api/me":
+            try:
+                user = self._session_user()
+                self._json(HTTPStatus.OK, {"username": user.username, "access_role": user.access_role})
+            except AuthenticationError:
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
+        elif path == "/api/employee/dashboard":
+            try:
+                self._json(HTTPStatus.OK, self.application.employee_dashboard(self._session_user()))
+            except AuthenticationError:
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
+            except PermissionError:
+                self._json(HTTPStatus.FORBIDDEN, {"error": "Employee access required"})
+            except (CareerCalculationError, RecommendationError) as error:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+        else:
+            self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
+
+    def do_POST(self) -> None:  # noqa: N802 - required BaseHTTPRequestHandler name
+        path = urlparse(self.path).path
+        if path == "/api/login":
+            try:
+                payload = self._read_json()
+                username = payload.get("username")
+                password = payload.get("password")
+                if not isinstance(username, str) or not isinstance(password, str):
+                    raise ValueError("Username and password are required")
+                user, token = self.application.login(username, password)
+                cookie = f"cq_session={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=28800"
+                self._json(HTTPStatus.OK, {"username": user.username, "access_role": user.access_role}, cookie)
+            except AuthenticationError:
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": "Invalid username or password"})
+            except ValueError as error:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+        elif path == "/api/logout":
+            self._json(HTTPStatus.NO_CONTENT, {}, "cq_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
+        else:
+            self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
+
+
+def serve(database_path: str | Path, host: str = "127.0.0.1", port: int = 8000,
+          session_secret: str | None = None) -> ThreadingHTTPServer:
+    """Build a local server. `serve_forever` is intentionally called by `main`."""
+    secret = session_secret or os.getenv("SESSION_SECRET") or secrets.token_urlsafe(48)
+    CareerQuestHandler.application = WebApplication(database_path, secret)
+    return ThreadingHTTPServer((host, port), CareerQuestHandler)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the Career Quest employee cabinet")
+    parser.add_argument("--database", required=True)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+    server = serve(args.database, args.host, args.port)
+    print(f"Career Quest is available at http://{args.host}:{args.port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

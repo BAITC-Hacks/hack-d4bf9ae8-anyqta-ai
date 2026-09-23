@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Career Quest</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section id="login-view" class="auth-card" aria-labelledby="login-heading">
+        <p class="eyebrow">HALYK · CAREER QUEST</p>
+        <h1 id="login-heading">Ваш следующий шаг в развитии</h1>
+        <p class="intro">Войдите, чтобы увидеть карьерную траекторию и персональные рекомендации.</p>
+        <form id="login-form">
+          <label>Логин<input id="username" name="username" type="email" autocomplete="username" required></label>
+          <label>Пароль<input id="password" name="password" type="password" autocomplete="current-password" required></label>
+          <p id="login-error" class="error" role="alert" hidden></p>
+          <button type="submit">Войти</button>
+        </form>
+        <p class="demo-hint">Демо-доступы перечислены в README проекта.</p>
+      </section>
+
+      <section id="employee-view" hidden>
+        <header class="topbar">
+          <div><p class="eyebrow">CAREER QUEST</p><h1 id="employee-name"></h1></div>
+          <div class="user-actions"><span id="user-role" class="pill"></span><button id="logout-button" class="secondary">Выйти</button></div>
+        </header>
+        <p id="page-error" class="error" role="alert" hidden></p>
+        <div id="employee-content" aria-live="polite"></div>
+      </section>
+
+      <section id="hr-view" class="auth-card" hidden>
+        <p class="eyebrow">CAREER QUEST · HR</p>
+        <h1>Доступ HR подтверждён</h1>
+        <p class="intro">HR-обзор и импорт проверочных профилей будут добавлены на этапе 7. Сейчас можно выйти и войти как сотрудник для проверки личного кабинета.</p>
+        <button id="hr-logout-button" class="secondary">Выйти</button>
+      </section>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
