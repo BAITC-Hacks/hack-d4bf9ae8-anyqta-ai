@@ -87,3 +87,23 @@ export LLM_MODEL="..."
 The model can select only verified event IDs; it cannot change skills, bypass
 audience or prerequisites, or invent an event. Invalid or slow model replies
 fall back to the rules-based result.
+
+## Create and verify demo accounts
+
+Import the starter kit first, then create the predefined demo accounts:
+
+```bash
+python3 -m backend.app.demo_seed --database ./var/career_quest.db
+```
+
+| Login | Password | Access role | Employee profile | Demo focus |
+|---|---|---|---|---|
+| `junior@careerquest.demo` | `DemoEmployee2026!` | employee | E0001, Junior | First path to Middle |
+| `middle@careerquest.demo` | `DemoEmployee2026!` | employee | E0002, Middle | Critical gap and participation history |
+| `senior@careerquest.demo` | `DemoEmployee2026!` | employee | E0007, Senior | Path to Lead |
+| `lead@careerquest.demo` | `DemoEmployee2026!` | employee | E0014, Lead | Cross-role Lead goal |
+| `hr@careerquest.demo` | `DemoHR2026!` | hr | — | HR dashboard and imports |
+
+The command is idempotent: it only creates missing accounts. If a documented
+username already belongs to a different account or password, it fails instead
+of changing that account. Passwords are stored as salted PBKDF2-SHA256 hashes.
