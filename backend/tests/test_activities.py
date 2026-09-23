@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backend.app.activities import ActivityError, active_enrollments, complete_activity, enroll_activity
+from backend.app.activities import ActivityError, active_enrollments, complete_activity, enroll_activity, reset_demo_employee
 from backend.app.career import calculate_trajectory
 from backend.app.db import connect
 from backend.app.importer import import_package, load_full_package
@@ -54,6 +54,16 @@ class ActivityLifecycleTests(unittest.TestCase):
     def test_direct_enrollment_in_mandatory_event_is_rejected(self):
         with self.assertRaises(ActivityError):
             enroll_activity(self.connection, "E0001", "EV_001")
+
+    def test_demo_reset_removes_only_app_created_progress(self):
+        before = calculate_trajectory(self.connection, "E0001")
+        enrollment = enroll_activity(self.connection, "E0001", "EV_005")["enrollment"]
+        complete_activity(self.connection, "E0001", enrollment["enrollment_id"])
+        reset = reset_demo_employee(self.connection, "E0001")
+        after = calculate_trajectory(self.connection, "E0001")
+        self.assertEqual(reset, {"removed_enrollments": 1, "removed_activity_records": 1})
+        self.assertEqual(before["effective_skills"], after["effective_skills"])
+        self.assertEqual(active_enrollments(self.connection, "E0001"), [])
 
 
 if __name__ == "__main__":

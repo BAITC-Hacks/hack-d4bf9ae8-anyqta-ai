@@ -4,6 +4,13 @@ const hrView = document.querySelector("#hr-view");
 const loginError = document.querySelector("#login-error");
 const pageError = document.querySelector("#page-error");
 const hrError = document.querySelector("#hr-error");
+const resetButton = document.querySelector("#reset-button");
+const activityModal = document.querySelector("#activity-modal");
+const modalTitle = document.querySelector("#activity-modal-title");
+const modalMeta = document.querySelector("#activity-modal-meta");
+const modalBenefits = document.querySelector("#activity-modal-benefits");
+const modalCompleteButton = document.querySelector("#modal-complete-button");
+let employeeDemoMode = false;
 
 async function request(path, options = {}) {
   const response = await fetch(path, { credentials: "same-origin", ...options });
@@ -24,10 +31,19 @@ function element(tag, className, text) {
   return node;
 }
 
+async function withLoading(button, loadingText, action) {
+  const originalText = button.textContent;
+  button.disabled = true; button.classList.add("loading"); button.textContent = loadingText;
+  try { return await action(); }
+  finally { button.disabled = false; button.classList.remove("loading"); button.textContent = originalText; }
+}
+
 function renderDashboard(data) {
-  const { trajectory, recommendations, recommendation_mode: mode, recommendation_notice: notice, active_enrollments: activeEnrollments, demo_mode: demoMode } = data;
+  const { trajectory, recommendations, recommendation_mode: mode, recommendation_notice: notice, active_enrollments: activeEnrollments, demo_mode: demoMode, is_demo_user: isDemoUser } = data;
   document.querySelector("#employee-name").textContent = trajectory.employee.full_name;
   document.querySelector("#user-role").textContent = "Сотрудник";
+  employeeDemoMode = demoMode;
+  resetButton.hidden = !(demoMode && isDemoUser);
   const root = document.querySelector("#employee-content");
   root.replaceChildren();
 
@@ -78,14 +94,14 @@ function renderDashboard(data) {
     card.append(element("h3", "", item.title), element("p", "event-meta", `${item.format} · ${item.duration_hours} ч${item.next_session ? ` · ближайшая сессия ${item.next_session}` : " · доступно в своём темпе"}`));
     const evidence = element("ul", "evidence"); item.evidence.forEach(reason => evidence.append(element("li", "", reason))); card.append(evidence);
     const start = element("button", "", "Начать активность");
-    start.addEventListener("click", () => enroll(item.event_id)); card.append(start); recommendationList.append(card);
+    start.addEventListener("click", () => startActivity(item, start)); card.append(start); recommendationList.append(card);
   }); recommendationsCard.append(recommendationList); dashboard.append(recommendationsCard); root.append(dashboard);
 
   if (activeEnrollments.length) {
     const active = element("section", "card"); active.append(element("h2", "", "В процессе"));
     activeEnrollments.forEach(item => {
       const row = element("article", "recommendation"); row.append(element("h3", "", item.title), element("p", "event-meta", `${item.format} · ${item.duration_hours} ч · начато ${item.registered_at}`));
-      if (demoMode) { const complete = element("button", "", "Завершить в демо"); complete.addEventListener("click", () => completeEnrollment(item.enrollment_id)); row.append(complete); }
+      if (demoMode) { const open = element("button", "", "Открыть активность"); open.addEventListener("click", () => openActivityModal(item, item.enrollment_id)); row.append(open); }
       active.append(row);
     }); dashboard.append(active);
   }
@@ -96,13 +112,42 @@ async function showEmployee() {
   loginView.hidden = true; hrView.hidden = true; employeeView.hidden = false; showError(pageError, ""); renderDashboard(data);
 }
 
-async function enroll(eventId) {
-  try { await request(`/api/employee/activities/${encodeURIComponent(eventId)}/enroll`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); await showEmployee(); }
+function openActivityModal(activity, enrollmentId) {
+  modalTitle.textContent = activity.title;
+  modalMeta.textContent = `${activity.format} · ${activity.duration_hours} ч`;
+  modalBenefits.replaceChildren();
+  modalCompleteButton.hidden = !employeeDemoMode;
+  const benefits = activity.expected_skill_changes || [];
+  if (benefits.length) benefits.forEach(change => modalBenefits.append(element("li", "", `${change.skill_name}: ${change.before_level} → ${change.after_level}${change.required_level !== null ? ` при требовании ${change.required_level}` : ""}`)));
+  else modalBenefits.append(element("li", "", "Активность уже начата. Завершение в демо обновит историю и прогресс."));
+  modalCompleteButton.onclick = () => completeEnrollment(enrollmentId, modalCompleteButton);
+  activityModal.showModal();
+}
+
+async function startActivity(item, button) {
+  try {
+    await withLoading(button, "Начинаем…", async () => {
+      const result = await request(`/api/employee/activities/${encodeURIComponent(item.event_id)}/enroll`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      openActivityModal(item, result.enrollment.enrollment_id);
+      await showEmployee();
+    });
+  }
   catch (error) { showError(pageError, error.message); }
 }
 
-async function completeEnrollment(enrollmentId) {
-  try { await request(`/api/employee/enrollments/${encodeURIComponent(enrollmentId)}/complete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); await showEmployee(); }
+async function completeEnrollment(enrollmentId, button) {
+  try {
+    await withLoading(button, "Засчитываем…", async () => {
+      await request(`/api/employee/enrollments/${encodeURIComponent(enrollmentId)}/complete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      activityModal.close(); await showEmployee();
+    });
+  }
+  catch (error) { showError(pageError, error.message); }
+}
+
+async function resetDemo(button) {
+  if (!window.confirm("Сбросить только ваш демо-прогресс? Начатые и завершённые через приложение активности будут удалены.")) return;
+  try { await withLoading(button, "Сбрасываем…", async () => { await request("/api/employee/demo-reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); await showEmployee(); }); }
   catch (error) { showError(pageError, error.message); }
 }
 
@@ -118,15 +163,18 @@ document.querySelector("#login-form").addEventListener("submit", async event => 
   event.preventDefault(); showError(loginError, "");
   const form = new FormData(event.currentTarget);
   try {
-    const user = await request("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: form.get("username"), password: form.get("password") }) });
-    if (user.access_role === "hr") { await showHr(); return; }
-    await showEmployee();
+    await withLoading(event.currentTarget.querySelector("button[type=submit]"), "Входим…", async () => {
+      const user = await request("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: form.get("username"), password: form.get("password") }) });
+      if (user.access_role === "hr") { await showHr(); return; }
+      await showEmployee();
+    });
   } catch (error) { showError(loginError, error.message); }
 });
 
 async function logout() { await request("/api/logout", { method: "POST" }); window.location.reload(); }
-document.querySelector("#logout-button").addEventListener("click", logout);
-document.querySelector("#hr-logout-button").addEventListener("click", logout);
+document.querySelector("#logout-button").addEventListener("click", event => withLoading(event.currentTarget, "Выходим…", logout));
+document.querySelector("#hr-logout-button").addEventListener("click", event => withLoading(event.currentTarget, "Выходим…", logout));
+resetButton.addEventListener("click", () => resetDemo(resetButton));
 
 function selectFilter(label, name, values, selected) {
   const wrapper = element("label", "", label); const select = element("select"); select.name = name;
@@ -144,7 +192,7 @@ function renderHrDetail(detail) {
   const list = element("ul", "gap-list"); gaps.forEach(item => list.append(element("li", "", `${item.skill_name}: ${item.current_level}/${item.required_level}${item.is_critical ? " · критический" : ""}`))); card.append(list);
   const rec = element("div", ""); rec.append(element("h3", "", "Доступные следующие шаги"));
   detail.recommendations.forEach(item => rec.append(element("p", "", item.title))); card.append(rec);
-  const back = element("button", "secondary", "Вернуться к обзору"); back.addEventListener("click", () => showHr()); card.append(back);
+  const back = element("button", "secondary", "Вернуться к обзору"); back.addEventListener("click", () => withLoading(back, "Загружаем…", showHr)); card.append(back);
   root.replaceChildren(card);
 }
 
@@ -168,7 +216,7 @@ function renderHrDashboard(data) {
   const filters = element("form", "filters");
   filters.append(selectFilter("Подразделение", "department", data.filter_options.departments, data.filters.department), selectFilter("Роль", "role", data.filter_options.roles, data.filters.role), selectFilter("Грейд", "grade", data.filter_options.grades, data.filters.grade));
   const apply = element("button", "", "Применить"); apply.type = "submit"; filters.append(apply);
-  filters.addEventListener("submit", event => { event.preventDefault(); const params = new URLSearchParams(new FormData(filters)); [...params.keys()].forEach(key => !params.get(key) && params.delete(key)); showHr(params); }); root.append(filters);
+  filters.addEventListener("submit", event => { event.preventDefault(); const params = new URLSearchParams(new FormData(filters)); [...params.keys()].forEach(key => !params.get(key) && params.delete(key)); withLoading(apply, "Загружаем…", () => showHr(params)); }); root.append(filters);
 
   const stats = element("div", "stat-grid");
   [["Сотрудников", data.summary.employees], ["Нужна поддержка", data.summary.needs_support], ["Компетенций с разрывами", data.summary.competencies_with_gaps]].forEach(([label, value]) => { const item = element("div", "stat"); item.append(element("strong", "", String(value)), element("span", "muted", label)); stats.append(item); }); root.append(stats);
@@ -182,7 +230,7 @@ function renderHrDashboard(data) {
   const body = element("tbody"); data.employees.forEach(person => { const row = element("tr"); const name = element("button", "secondary", person.full_name); name.addEventListener("click", () => showHrDetail(person.employee_id)); const cell = element("td"); cell.append(name); row.append(cell, element("td", "", `${person.role} · ${person.grade}`), element("td", "", person.coverage_percent === null ? "Цель не задана" : `${person.coverage_percent}%`)); const signals = element("td"); if (person.support_signals.length) person.support_signals.forEach(signal => signals.append(element("p", "signal", signal))); else signals.append(element("span", "muted", "Нет")); row.append(signals); body.append(row); }); table.append(body); tableWrap.append(table); people.append(tableWrap); root.append(people);
 
   const upload = element("section", "card"); upload.append(element("h2", "", "Загрузить проверочные данные"), element("p", "muted", "Выберите employees.json и activity_history.csv в исходной схеме набора. Импорт проверяется до изменения базы."));
-  const uploadForm = element("form", "upload"); const employeeInput = element("input"); employeeInput.id = "employees-file"; employeeInput.type = "file"; employeeInput.accept = ".json,application/json"; const historyInput = element("input"); historyInput.id = "history-file"; historyInput.type = "file"; historyInput.accept = ".csv,text/csv"; const submit = element("button", "", "Проверить и импортировать"); submit.type = "submit"; uploadForm.append(element("label", "", "employees.json"), employeeInput, element("label", "", "activity_history.csv"), historyInput, submit); uploadForm.addEventListener("submit", event => { event.preventDefault(); importProfiles(uploadForm); }); upload.append(uploadForm); root.append(upload);
+  const uploadForm = element("form", "upload"); const employeeInput = element("input"); employeeInput.id = "employees-file"; employeeInput.type = "file"; employeeInput.accept = ".json,application/json"; const historyInput = element("input"); historyInput.id = "history-file"; historyInput.type = "file"; historyInput.accept = ".csv,text/csv"; const submit = element("button", "", "Проверить и импортировать"); submit.type = "submit"; uploadForm.append(element("label", "", "employees.json"), employeeInput, element("label", "", "activity_history.csv"), historyInput, submit); uploadForm.addEventListener("submit", event => { event.preventDefault(); withLoading(submit, "Импортируем…", () => importProfiles(uploadForm)); }); upload.append(uploadForm); root.append(upload);
 }
 
 async function showHr(params = new URLSearchParams()) {

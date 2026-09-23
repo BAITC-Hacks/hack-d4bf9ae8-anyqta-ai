@@ -25,7 +25,7 @@
       <section id="employee-view" hidden>
         <header class="topbar">
           <div><p class="eyebrow">CAREER QUEST</p><h1 id="employee-name"></h1></div>
-          <div class="user-actions"><span id="user-role" class="pill"></span><button id="logout-button" class="secondary">Выйти</button></div>
+          <div class="user-actions"><span id="user-role" class="pill"></span><button id="reset-button" class="secondary" hidden>Сбросить демо</button><button id="logout-button" class="secondary">Выйти</button></div>
         </header>
         <p id="page-error" class="error" role="alert" hidden></p>
         <div id="employee-content" aria-live="polite"></div>
@@ -40,6 +40,14 @@
         <div id="hr-content" aria-live="polite"></div>
       </section>
     </main>
+    <dialog id="activity-modal" class="activity-modal" aria-labelledby="activity-modal-title">
+      <form method="dialog" class="modal-header"><p class="eyebrow">ПРОВЕДЕНИЕ АКТИВНОСТИ</p><button id="modal-close-button" class="icon-button" aria-label="Закрыть">×</button></form>
+      <h2 id="activity-modal-title"></h2>
+      <p id="activity-modal-meta" class="event-meta"></p>
+      <ul id="activity-modal-benefits" class="evidence"></ul>
+      <p class="mode-note">В демо завершение имитирует получение статуса из системы обучения.</p>
+      <button id="modal-complete-button">Завершить активность в демо</button>
+    </dialog>
     <script src="/app.js" defer></script>
   </body>
 </html>

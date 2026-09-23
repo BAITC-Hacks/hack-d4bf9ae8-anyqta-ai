@@ -109,6 +109,10 @@ def enroll_activity(connection: sqlite3.Connection, employee_id: str, event_id: 
             """,
             (enrollment_id, employee_id, event_id, record_id, activity_date),
         )
+        connection.execute(
+            "INSERT INTO app_activity_records(record_id, employee_id) VALUES (?, ?)",
+            (record_id, employee_id),
+        )
     return {
         "created": True,
         "enrollment": {
@@ -185,3 +189,34 @@ def complete_activity(connection: sqlite3.Connection, employee_id: str, enrollme
         "coverage_before": before["coverage_percent"],
         "coverage_after": after["coverage_percent"],
     }
+
+
+def reset_demo_employee(connection: sqlite3.Connection, employee_id: str) -> dict[str, int]:
+    """Remove only activity records created by this app for one demo employee."""
+    with connection:
+        active = connection.execute(
+            "SELECT COUNT(*) FROM activity_enrollments WHERE employee_id = ?", (employee_id,)
+        ).fetchone()[0]
+        records = connection.execute(
+            """
+            SELECT COUNT(*) FROM activity_history
+            WHERE employee_id = ? AND (
+              record_id IN (SELECT record_id FROM app_activity_records WHERE employee_id = ?)
+              OR source_json LIKE '%"origin": "career_quest_app"%'
+            )
+            """,
+            (employee_id, employee_id),
+        ).fetchone()[0]
+        # Enrollment references the history record, so it must be removed first.
+        connection.execute("DELETE FROM activity_enrollments WHERE employee_id = ?", (employee_id,))
+        connection.execute(
+            """
+            DELETE FROM activity_history
+            WHERE employee_id = ? AND (
+              record_id IN (SELECT record_id FROM app_activity_records WHERE employee_id = ?)
+              OR source_json LIKE '%"origin": "career_quest_app"%'
+            )
+            """,
+            (employee_id, employee_id),
+        )
+    return {"removed_enrollments": active, "removed_activity_records": records}

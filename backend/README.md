@@ -139,6 +139,11 @@ recommendations. A repeated completion request cannot add a second skill gain.
 Set `DEMO_MODE=false` to hide the completion simulation. A real LMS integration
 is intentionally outside the MVP.
 
+Each employee demo account also has **«Сбросить демо»**. It is available only
+to that account while `DEMO_MODE=true` and removes only activity records created
+through the application for that employee. The original starter-kit history,
+other demo accounts and HR-imported profiles are preserved.
+
 ## HR overview and jury-data upload
 
 Sign in as `hr@careerquest.demo` after starting the web server. The HR screen

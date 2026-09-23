@@ -56,6 +56,13 @@ class EmployeeCabinetTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             non_demo.complete_demo_enrollment(user, enrollment["enrollment_id"])
 
+    def test_demo_user_can_reset_own_app_progress(self):
+        user, _ = self.application.login("junior@careerquest.demo", "DemoEmployee2026!")
+        enrollment = self.application.enroll(user, "EV_005")["enrollment"]
+        self.application.complete_demo_enrollment(user, enrollment["enrollment_id"])
+        reset = self.application.reset_demo_progress(user)
+        self.assertEqual(reset["removed_activity_records"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from .activities import ActivityError, active_enrollments, complete_activity, enroll_activity
+from .activities import ActivityError, active_enrollments, complete_activity, enroll_activity, reset_demo_employee
 from .auth import AuthenticationError, User, authenticate, issue_session, read_session
 from .career import CareerCalculationError, calculate_trajectory
 from .db import connect, migrate
@@ -81,6 +81,7 @@ class WebApplication:
             )
             return {
                 "user": {"username": user.username, "access_role": user.access_role},
+                "is_demo_user": user.is_demo,
                 "trajectory": trajectory,
                 "recommendations": recommendation_result["recommendations"],
                 "recommendation_mode": recommendation_result["mode"],
@@ -109,6 +110,17 @@ class WebApplication:
         connection = self._connection()
         try:
             return complete_activity(connection, user.employee_id, enrollment_id, completion_date)
+        finally:
+            connection.close()
+
+    def reset_demo_progress(self, user: User) -> dict[str, int]:
+        if not self.demo_mode:
+            raise PermissionError("Demo reset is disabled")
+        if user.access_role != "employee" or user.employee_id is None or not user.is_demo:
+            raise PermissionError("Demo employee access required")
+        connection = self._connection()
+        try:
+            return reset_demo_employee(connection, user.employee_id)
         finally:
             connection.close()
 
@@ -315,6 +327,16 @@ class CareerQuestHandler(BaseHTTPRequestHandler):
             except PermissionError:
                 self._json(HTTPStatus.FORBIDDEN, {"error": "HR access required"})
             except (ValueError, HrError) as error:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+        elif path == "/api/employee/demo-reset":
+            try:
+                self._read_json()
+                self._json(HTTPStatus.OK, self.application.reset_demo_progress(self._session_user()))
+            except AuthenticationError:
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
+            except PermissionError as error:
+                self._json(HTTPStatus.FORBIDDEN, {"error": str(error)})
+            except ValueError as error:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
         else:
             self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
