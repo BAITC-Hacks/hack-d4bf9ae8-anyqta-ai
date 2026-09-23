@@ -20,7 +20,7 @@ from .auth import AuthenticationError, User, authenticate, issue_session, read_s
 from .career import CareerCalculationError, calculate_trajectory
 from .db import connect, migrate
 from .hr import HrError, hr_dashboard, hr_employee_detail, import_hr_profile_package
-from .recommendations import RecommendationError, recommend_employee
+from .recommendations import RecommendationError, recommend_employee, selector_from_environment
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -76,7 +76,9 @@ class WebApplication:
         connection = self._connection()
         try:
             trajectory = calculate_trajectory(connection, user.employee_id)
-            recommendation_result = recommend_employee(connection, user.employee_id)
+            recommendation_result = recommend_employee(
+                connection, user.employee_id, selector=selector_from_environment()
+            )
             return {
                 "user": {"username": user.username, "access_role": user.access_role},
                 "trajectory": trajectory,

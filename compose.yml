@@ -1,0 +1,18 @@
+services:
+  career-quest:
+    build:
+      context: .
+    ports:
+      - "${CAREER_QUEST_PORT:-8000}:8000"
+    environment:
+      SESSION_SECRET: ${SESSION_SECRET:-local-demo-session-secret-change-before-deployment-2026}
+      DEMO_MODE: ${DEMO_MODE:-true}
+      LLM_API_URL: ${LLM_API_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+    volumes:
+      - career_quest_data:/app/var
+    restart: unless-stopped
+
+volumes:
+  career_quest_data:

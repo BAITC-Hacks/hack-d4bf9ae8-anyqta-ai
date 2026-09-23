@@ -370,7 +370,7 @@ def recommend_employee(connection: sqlite3.Connection, employee_id: str, limit: 
     }
 
 
-def _selector_from_environment() -> LlmSelector | None:
+def selector_from_environment() -> LlmSelector | None:
     url = os.getenv("LLM_API_URL")
     api_key = os.getenv("LLM_API_KEY")
     model = os.getenv("LLM_MODEL")
@@ -392,7 +392,7 @@ def main() -> None:
     try:
         migrate(connection)
         result = recommend_employee(
-            connection, args.employee_id, args.limit, args.as_of_date, _selector_from_environment()
+            connection, args.employee_id, args.limit, args.as_of_date, selector_from_environment()
         )
     except (CareerCalculationError, RecommendationError) as error:
         parser.exit(2, f"Recommendation failed: {error}\n")

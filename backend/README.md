@@ -1,11 +1,9 @@
 # Career Quest data foundation
 
-This package contains the first implementation step: the local data store and a
+This package contains the application data store, calculations, web cabinet and
 validated importer for the Career Quest starter kit.
 
-It deliberately uses only Python's standard library and SQLite while the API is
-not yet implemented. The schema is portable to PostgreSQL; the next step can
-replace the connection layer without changing the import contract.
+The current local demo uses SQLite and only Python's standard library.
 
 ## Import the starter kit
 
