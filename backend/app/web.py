@@ -20,6 +20,7 @@ from .auth import AuthenticationError, User, authenticate, issue_session, read_s
 from .career import CareerCalculationError, calculate_trajectory
 from .db import connect, migrate
 from .hr import HrError, hr_dashboard, hr_employee_detail, import_hr_profile_package
+from .profiles import ProfileError, employee_profile, update_career_goal
 from .recommendations import RecommendationError, recommend_employee, selector_from_environment
 
 
@@ -83,12 +84,23 @@ class WebApplication:
                 "user": {"username": user.username, "access_role": user.access_role},
                 "is_demo_user": user.is_demo,
                 "trajectory": trajectory,
+                "profile": employee_profile(connection, user.employee_id),
                 "recommendations": recommendation_result["recommendations"],
                 "recommendation_mode": recommendation_result["mode"],
                 "recommendation_notice": recommendation_result["fallback_reason"],
                 "active_enrollments": active_enrollments(connection, user.employee_id),
                 "demo_mode": self.demo_mode,
             }
+        finally:
+            connection.close()
+
+    def update_employee_goal(self, user: User, target_role: str | None,
+                             target_grade: str | None) -> dict[str, Any]:
+        if user.access_role != "employee" or user.employee_id is None:
+            raise PermissionError("Employee access required")
+        connection = self._connection()
+        try:
+            return update_career_goal(connection, user.employee_id, target_role, target_grade)
         finally:
             connection.close()
 
@@ -237,7 +249,7 @@ class CareerQuestHandler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
             except PermissionError:
                 self._json(HTTPStatus.FORBIDDEN, {"error": "Employee access required"})
-            except (CareerCalculationError, RecommendationError, ActivityError) as error:
+            except (CareerCalculationError, RecommendationError, ActivityError, ProfileError) as error:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
         elif path == "/api/hr/dashboard":
             try:
@@ -260,7 +272,7 @@ class CareerQuestHandler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
             except PermissionError:
                 self._json(HTTPStatus.FORBIDDEN, {"error": "HR access required"})
-            except (HrError, CareerCalculationError, RecommendationError) as error:
+            except (HrError, CareerCalculationError, RecommendationError, ProfileError) as error:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
         else:
             self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
@@ -280,6 +292,20 @@ class CareerQuestHandler(BaseHTTPRequestHandler):
             except AuthenticationError:
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "Invalid username or password"})
             except ValueError as error:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+        elif path == "/api/employee/goal":
+            try:
+                user = self._session_user()
+                payload = self._read_json()
+                if set(payload) != {"target_role", "target_grade"}:
+                    raise ProfileError("Provide only target_role and target_grade")
+                result = self.application.update_employee_goal(user, payload["target_role"], payload["target_grade"])
+                self._json(HTTPStatus.OK, result)
+            except AuthenticationError:
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
+            except PermissionError:
+                self._json(HTTPStatus.FORBIDDEN, {"error": "Employee access required"})
+            except (ValueError, CareerCalculationError) as error:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
         elif path == "/api/logout":
             self._json(HTTPStatus.NO_CONTENT, {}, "cq_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
