@@ -47,6 +47,15 @@ class EmployeeCabinetTests(unittest.TestCase):
         with self.assertRaises(AuthenticationError):
             self.application.user_from_token(token + "tampered")
 
+    def test_employee_can_complete_only_in_demo_mode(self):
+        user, _ = self.application.login("junior@careerquest.demo", "DemoEmployee2026!")
+        enrollment = self.application.enroll(user, "EV_005")["enrollment"]
+        result = self.application.complete_demo_enrollment(user, enrollment["enrollment_id"])
+        self.assertEqual(result["event_id"], "EV_005")
+        non_demo = WebApplication(self.database, SESSION_SECRET, demo_mode=False)
+        with self.assertRaises(PermissionError):
+            non_demo.complete_demo_enrollment(user, enrollment["enrollment_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

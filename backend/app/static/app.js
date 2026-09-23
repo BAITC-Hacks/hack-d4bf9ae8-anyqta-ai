@@ -24,7 +24,7 @@ function element(tag, className, text) {
 }
 
 function renderDashboard(data) {
-  const { trajectory, recommendations, recommendation_mode: mode, recommendation_notice: notice } = data;
+  const { trajectory, recommendations, recommendation_mode: mode, recommendation_notice: notice, active_enrollments: activeEnrollments, demo_mode: demoMode } = data;
   document.querySelector("#employee-name").textContent = trajectory.employee.full_name;
   document.querySelector("#user-role").textContent = "Сотрудник";
   const root = document.querySelector("#employee-content");
@@ -75,13 +75,34 @@ function renderDashboard(data) {
   recommendations.forEach(item => {
     const card = element("article", "recommendation");
     card.append(element("h3", "", item.title), element("p", "event-meta", `${item.format} · ${item.duration_hours} ч${item.next_session ? ` · ближайшая сессия ${item.next_session}` : " · доступно в своём темпе"}`));
-    const evidence = element("ul", "evidence"); item.evidence.forEach(reason => evidence.append(element("li", "", reason))); card.append(evidence); recommendationList.append(card);
+    const evidence = element("ul", "evidence"); item.evidence.forEach(reason => evidence.append(element("li", "", reason))); card.append(evidence);
+    const start = element("button", "", "Начать активность");
+    start.addEventListener("click", () => enroll(item.event_id)); card.append(start); recommendationList.append(card);
   }); recommendationsCard.append(recommendationList); dashboard.append(recommendationsCard); root.append(dashboard);
+
+  if (activeEnrollments.length) {
+    const active = element("section", "card"); active.append(element("h2", "", "В процессе"));
+    activeEnrollments.forEach(item => {
+      const row = element("article", "recommendation"); row.append(element("h3", "", item.title), element("p", "event-meta", `${item.format} · ${item.duration_hours} ч · начато ${item.registered_at}`));
+      if (demoMode) { const complete = element("button", "", "Завершить в демо"); complete.addEventListener("click", () => completeEnrollment(item.enrollment_id)); row.append(complete); }
+      active.append(row);
+    }); dashboard.append(active);
+  }
 }
 
 async function showEmployee() {
   const data = await request("/api/employee/dashboard");
   loginView.hidden = true; hrView.hidden = true; employeeView.hidden = false; showError(pageError, ""); renderDashboard(data);
+}
+
+async function enroll(eventId) {
+  try { await request(`/api/employee/activities/${encodeURIComponent(eventId)}/enroll`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); await showEmployee(); }
+  catch (error) { showError(pageError, error.message); }
+}
+
+async function completeEnrollment(enrollmentId) {
+  try { await request(`/api/employee/enrollments/${encodeURIComponent(enrollmentId)}/complete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); await showEmployee(); }
+  catch (error) { showError(pageError, error.message); }
 }
 
 async function restoreSession() {

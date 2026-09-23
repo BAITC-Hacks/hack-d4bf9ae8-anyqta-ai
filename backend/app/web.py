@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from .activities import ActivityError, active_enrollments, complete_activity, enroll_activity
 from .auth import AuthenticationError, User, authenticate, issue_session, read_session
 from .career import CareerCalculationError, calculate_trajectory
 from .db import connect, migrate
@@ -28,11 +29,12 @@ MAX_BODY_BYTES = 10_000
 class WebApplication:
     """Request-independent operations used by HTTP handlers and tests."""
 
-    def __init__(self, database_path: str | Path, session_secret: str):
+    def __init__(self, database_path: str | Path, session_secret: str, demo_mode: bool = True):
         if len(session_secret) < 32:
             raise ValueError("SESSION_SECRET must contain at least 32 characters")
         self.database_path = str(database_path)
         self.session_secret = session_secret
+        self.demo_mode = demo_mode
         connection = connect(self.database_path)
         try:
             migrate(connection)
@@ -80,7 +82,30 @@ class WebApplication:
                 "recommendations": recommendation_result["recommendations"],
                 "recommendation_mode": recommendation_result["mode"],
                 "recommendation_notice": recommendation_result["fallback_reason"],
+                "active_enrollments": active_enrollments(connection, user.employee_id),
+                "demo_mode": self.demo_mode,
             }
+        finally:
+            connection.close()
+
+    def enroll(self, user: User, event_id: str) -> dict[str, Any]:
+        if user.access_role != "employee" or user.employee_id is None:
+            raise PermissionError("Employee access required")
+        connection = self._connection()
+        try:
+            return enroll_activity(connection, user.employee_id, event_id)
+        finally:
+            connection.close()
+
+    def complete_demo_enrollment(self, user: User, enrollment_id: str,
+                                 completion_date: str = "2026-10-01") -> dict[str, Any]:
+        if not self.demo_mode:
+            raise PermissionError("Demo completion is disabled")
+        if user.access_role != "employee" or user.employee_id is None:
+            raise PermissionError("Employee access required")
+        connection = self._connection()
+        try:
+            return complete_activity(connection, user.employee_id, enrollment_id, completion_date)
         finally:
             connection.close()
 
@@ -165,7 +190,7 @@ class CareerQuestHandler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
             except PermissionError:
                 self._json(HTTPStatus.FORBIDDEN, {"error": "Employee access required"})
-            except (CareerCalculationError, RecommendationError) as error:
+            except (CareerCalculationError, RecommendationError, ActivityError) as error:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
         else:
             self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
@@ -188,15 +213,49 @@ class CareerQuestHandler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
         elif path == "/api/logout":
             self._json(HTTPStatus.NO_CONTENT, {}, "cq_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0")
+        elif path.startswith("/api/employee/activities/") and path.endswith("/enroll"):
+            try:
+                self._read_json()
+                parts = path.split("/")
+                if len(parts) != 6 or not parts[4]:
+                    raise ValueError("Invalid activity path")
+                result = self.application.enroll(self._session_user(), parts[4])
+                self._json(HTTPStatus.CREATED if result["created"] else HTTPStatus.OK, result)
+            except AuthenticationError:
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
+            except PermissionError:
+                self._json(HTTPStatus.FORBIDDEN, {"error": "Employee access required"})
+            except (ValueError, ActivityError) as error:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+        elif path.startswith("/api/employee/enrollments/") and path.endswith("/complete"):
+            try:
+                payload = self._read_json()
+                parts = path.split("/")
+                if len(parts) != 6 or not parts[4]:
+                    raise ValueError("Invalid enrollment path")
+                completion_date = payload.get("completion_date", "2026-10-01")
+                if not isinstance(completion_date, str):
+                    raise ValueError("completion_date must be an ISO date")
+                result = self.application.complete_demo_enrollment(
+                    self._session_user(), parts[4], completion_date
+                )
+                self._json(HTTPStatus.OK, result)
+            except AuthenticationError:
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": "Authentication required"})
+            except PermissionError as error:
+                self._json(HTTPStatus.FORBIDDEN, {"error": str(error)})
+            except (ValueError, ActivityError) as error:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
         else:
             self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
 
 def serve(database_path: str | Path, host: str = "127.0.0.1", port: int = 8000,
-          session_secret: str | None = None) -> ThreadingHTTPServer:
+          session_secret: str | None = None, demo_mode: bool | None = None) -> ThreadingHTTPServer:
     """Build a local server. `serve_forever` is intentionally called by `main`."""
     secret = session_secret or os.getenv("SESSION_SECRET") or secrets.token_urlsafe(48)
-    CareerQuestHandler.application = WebApplication(database_path, secret)
+    is_demo = demo_mode if demo_mode is not None else os.getenv("DEMO_MODE", "true").lower() == "true"
+    CareerQuestHandler.application = WebApplication(database_path, secret, is_demo)
     return ThreadingHTTPServer((host, port), CareerQuestHandler)
 
 

@@ -128,3 +128,15 @@ export SESSION_SECRET="replace-with-a-long-random-secret"
 Without `SESSION_SECRET`, the server generates an in-memory secret for the
 current local run; active sessions expire when the server restarts. HR can sign
 in now; its analytics and import interface are added in stage 7.
+
+## Activity lifecycle in the demo
+
+In the employee cabinet, use **«Начать активность»** on a recommendation. It
+creates one `in_progress` history record and moves the activity to **«В
+процессе»**. In the local demo, `DEMO_MODE=true` by default and exposes
+**«Завершить в демо»**. Completion is transactional: it changes that same
+record to `completed`, saves `completed_at`, recalculates skills and refreshes
+recommendations. A repeated completion request cannot add a second skill gain.
+
+Set `DEMO_MODE=false` to hide the completion simulation. A real LMS integration
+is intentionally outside the MVP.
